@@ -87,22 +87,33 @@ export function DetailPanel({
           </section>
         )}
 
-        <Separator />
-
         {edge && (
-          <section className="space-y-1.5">
-            <SectionTitle>OTG escape edge</SectionTitle>
-            <Row
-              label="Kappa (min ORC)"
-              value={edge.min_kappa.toFixed(4)}
-              mono
-              highlight
-            />
-            <Row
-              label="Destination"
-              value={instance.optima[edge.target]?.label ?? "self"}
-              mono
-            />
+          <section className="space-y-2">
+            <SectionTitle>Neighbor ORC Values</SectionTitle>
+            <div className="space-y-1.5">
+              {Object.entries(otg.orc_values[nodeIdx] || {})
+                .sort(([, a], [, b]) => a - b)
+                .map(([nbr, kappa]) => (
+                  <div key={nbr} className="flex items-center gap-2 text-[10px]">
+                    <span className="w-8 text-right font-mono tabular-nums text-muted-foreground">
+                      {kappa.toFixed(2)}
+                    </span>
+                    <div className="flex-1 h-3 bg-secondary rounded-sm overflow-hidden relative">
+                      <div
+                        className={`absolute top-0 bottom-0 right-0 ${
+                          kappa < 0 ? "bg-primary" : "bg-blue-500/50"
+                        }`}
+                        style={{
+                          width: `${Math.min(100, Math.max(0, Math.abs(kappa) * 100))}%`,
+                        }}
+                      />
+                    </div>
+                    {parseInt(nbr) === edge.via_neighbor && (
+                      <span className="w-3 text-primary">←</span>
+                    )}
+                  </div>
+                ))}
+            </div>
           </section>
         )}
 
@@ -134,13 +145,17 @@ export function DetailPanel({
               {explain.matching.map(([i, j], idx) => (
                 <div
                   key={idx}
-                  className="flex items-center justify-between gap-2"
+                  className="flex items-center gap-2"
                 >
-                  <span>{explain.x_exclusive_labels[i]}</span>
-                  <span className="text-muted-foreground text-[10px]">
-                    {explain.pair_costs[idx].toFixed(2)}
-                  </span>
-                  <span>{explain.y_exclusive_labels[j]}</span>
+                  <span className="w-10 text-right">{explain.x_exclusive_labels[i]}</span>
+                  <div className="flex-1 flex items-center">
+                    <div className="h-px bg-border flex-1" />
+                    <span className="text-[10px] text-muted-foreground px-1 bg-card">
+                      {explain.pair_costs[idx].toFixed(2)}
+                    </span>
+                    <div className="h-px bg-border flex-1" />
+                  </div>
+                  <span className="w-10">{explain.y_exclusive_labels[j]}</span>
                 </div>
               ))}
             </div>

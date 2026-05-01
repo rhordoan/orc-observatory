@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
-import { createInstance, buildOTG, buildLON } from "@/lib/api";
+import { createInstance, buildOTG, buildLON, streamOTG } from "@/lib/api";
 import type { InstanceData, OTGData, LONData } from "@/lib/types";
 
 interface SidebarProps {
@@ -29,9 +29,11 @@ export function Sidebar({
   const [n, setN] = useState(10);
   const [k, setK] = useState(2);
   const [seed, setSeed] = useState<string>("42");
+  const [hasGenerated, setHasGenerated] = useState(false);
 
-  async function handleGenerate() {
+  const handleGenerate = useCallback(async () => {
     setIsLoading(true);
+    setHasGenerated(true);
     try {
       const inst = await createInstance({
         problem_type: problemType,
@@ -52,6 +54,71 @@ export function Sidebar({
     } finally {
       setIsLoading(false);
     }
+  }, [problemType, n, k, seed, onInstanceCreated, onOtgBuilt, onLonBuilt, setIsLoading]);
+
+  // Wow feature: phase K-slider live rebuild
+  useEffect(() => {
+    if (!hasGenerated) return;
+    const timer = setTimeout(() => {
+      handleGenerate();
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [k, n, problemType, hasGenerated]); // removed handleGenerate from deps to avoid loop if not stable
+
+  function handleAnimate() {
+    if (!instance) return;
+    setIsLoading(true);
+
+    const partialOtg: OTGData = {
+      instance_id: instance.instance_id,
+      edges: [],
+      funnels: [],
+      orc_values: {},
+      compression_ratio: 1,
+      mean_terminal_rank: 0,
+      top5_reachability: 0,
+      dag_depth: 0,
+      has_cycles: false,
+    };
+    onOtgBuilt({ ...partialOtg });
+
+    const cancel = streamOTG(
+      instance.instance_id,
+      1.0,
+      (msg) => {
+        if (msg.type === "edge_added") {
+          partialOtg.edges.push({
+            source: msg.source as number,
+            target: msg.target as number,
+            min_kappa: msg.min_kappa as number,
+            via_neighbor: msg.via_neighbor as number,
+          });
+          onOtgBuilt({ ...partialOtg, edges: [...partialOtg.edges] });
+        } else if (msg.type === "funnel_formed") {
+          partialOtg.funnels.push({
+            attractor_idx: msg.attractor as number,
+            member_indices: msg.members as number[],
+            attractor_fitness: msg.attractor_fitness as number,
+            is_cycle: msg.is_cycle as boolean,
+          });
+          onOtgBuilt({ ...partialOtg, funnels: [...partialOtg.funnels] });
+        } else if (msg.type === "complete") {
+          partialOtg.compression_ratio = msg.compression as number;
+          partialOtg.mean_terminal_rank = msg.mean_terminal_rank as number;
+          partialOtg.top5_reachability = msg.top5_reachability as number;
+          partialOtg.dag_depth = msg.dag_depth as number;
+          partialOtg.has_cycles = msg.has_cycles as boolean;
+          onOtgBuilt({ ...partialOtg });
+        }
+      },
+      () => {
+        // Fetch full OTG at the end to get orc_values which aren't streamed
+        buildOTG(instance.instance_id).then((fullOtg) => {
+          onOtgBuilt(fullOtg);
+          setIsLoading(false);
+        });
+      }
+    );
   }
 
   return (
@@ -127,20 +194,31 @@ export function Sidebar({
           />
         </section>
 
-        <Button
-          onClick={handleGenerate}
-          disabled={isLoading}
-          className="w-full"
-        >
-          {isLoading ? (
-            <span className="flex items-center gap-2">
-              <LoadingDots />
-              Generating
-            </span>
-          ) : (
-            "Generate & Analyze"
-          )}
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            onClick={handleGenerate}
+            disabled={isLoading}
+            className="flex-1"
+          >
+            {isLoading ? (
+              <span className="flex items-center gap-2">
+                <LoadingDots />
+                Generating
+              </span>
+            ) : (
+              "Generate"
+            )}
+          </Button>
+
+          <Button
+            variant="secondary"
+            onClick={handleAnimate}
+            disabled={!instance || isLoading}
+            title="Animate OTG construction via WebSocket"
+          >
+            Animate
+          </Button>
+        </div>
 
         {instance && (
           <Card className="p-3 space-y-1.5">
