@@ -108,6 +108,7 @@ async def stream_otg(ws: WebSocket):
                 "source": edge.source,
                 "target": edge.target,
                 "min_kappa": round(edge.min_kappa, 4),
+                "via_neighbor": edge.via_neighbor,
                 "dest_fitness": round(cached.optima[edge.target].fitness, 4),
                 "progress": f"{i + 1}/{n_optima}",
             })
@@ -118,6 +119,7 @@ async def stream_otg(ws: WebSocket):
                 "type": "funnel_formed",
                 "attractor": funnel.attractor_idx,
                 "members": funnel.member_indices,
+                "attractor_fitness": funnel.attractor_fitness,
                 "size": len(funnel.member_indices),
                 "is_cycle": funnel.is_cycle,
             })
