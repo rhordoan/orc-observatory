@@ -25,6 +25,19 @@ export function GraphCanvas({
   const containerRef = useRef<HTMLDivElement>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("otg");
 
+  const selectedNodeRef = useRef(selectedNode);
+  const onNodeSelectRef = useRef(onNodeSelect);
+
+  useEffect(() => {
+    selectedNodeRef.current = selectedNode;
+    onNodeSelectRef.current = onNodeSelect;
+    
+    if (!containerRef.current) return;
+    d3.select(containerRef.current).selectAll<SVGCircleElement, any>("circle")
+      .attr("stroke", (d) => d.idx === selectedNode ? "var(--primary)" : (d.isAttractor ? "var(--foreground)" : "transparent"))
+      .attr("stroke-width", (d) => d.idx === selectedNode ? 3 : (d.isAttractor ? 2 : 0));
+  }, [selectedNode, onNodeSelect]);
+
   useEffect(() => {
     if (!containerRef.current || !instance || !otg) return;
 
@@ -154,10 +167,10 @@ export function GraphCanvas({
         .attr("r", (d) => nodeRadius(d.basinSize))
         .attr("fill", (d) => funnelColors[d.funnelIdx % funnelColors.length])
         .attr("fill-opacity", (d) => (d.isAttractor ? 1 : 0.7))
-        .attr("stroke", (d) => d.idx === selectedNode ? "var(--primary)" : (d.isAttractor ? "var(--foreground)" : "transparent"))
-        .attr("stroke-width", (d) => d.idx === selectedNode ? 3 : (d.isAttractor ? 2 : 0))
+        .attr("stroke", (d) => d.idx === selectedNodeRef.current ? "var(--primary)" : (d.isAttractor ? "var(--foreground)" : "transparent"))
+        .attr("stroke-width", (d) => d.idx === selectedNodeRef.current ? 3 : (d.isAttractor ? 2 : 0))
         .attr("cursor", "pointer")
-        .on("click", (_event, d) => onNodeSelect(d.idx === selectedNode ? null : d.idx))
+        .on("click", (_event, d) => onNodeSelectRef.current(d.idx === selectedNodeRef.current ? null : d.idx))
         .on("mouseenter", function (_, d) {
           d3.select(this)
             .attr("fill-opacity", 1)
@@ -167,8 +180,8 @@ export function GraphCanvas({
         .on("mouseleave", function (_, d) {
           d3.select(this)
             .attr("fill-opacity", d.isAttractor ? 1 : 0.7)
-            .attr("stroke", d.idx === selectedNode ? "var(--primary)" : (d.isAttractor ? "var(--foreground)" : "transparent"))
-            .attr("stroke-width", d.idx === selectedNode ? 3 : (d.isAttractor ? 2 : 0));
+            .attr("stroke", d.idx === selectedNodeRef.current ? "var(--primary)" : (d.isAttractor ? "var(--foreground)" : "transparent"))
+            .attr("stroke-width", d.idx === selectedNodeRef.current ? 3 : (d.isAttractor ? 2 : 0));
         });
 
       if (isOtg) {
@@ -255,7 +268,7 @@ export function GraphCanvas({
     return () => {
       simulation.stop();
     };
-  }, [instance, otg, lon, viewMode, selectedNode, onNodeSelect]);
+  }, [instance, otg, lon, viewMode]);
 
   return (
     <div className="flex-1 flex flex-col min-w-0 relative">
