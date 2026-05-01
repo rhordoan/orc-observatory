@@ -8,7 +8,7 @@ The ORC Observatory lets researchers explore combinatorial fitness landscapes th
 
 1. Enumerates local optima and their basins of attraction
 2. Computes fitness-lifted Ollivier-Ricci curvature on the search graph
-3. Builds the **ORC Transition Graph (OTG)** -- a deterministic, parameter-free directed graph that reveals funnel structure and escape directions
+3. Builds the **ORC Transition Graph (OTG)**, a deterministic, parameter-free directed graph that reveals funnel structure and escape directions
 4. Visualizes the OTG interactively with animated construction, curvature-colored edges, and funnel highlighting
 5. Compares the OTG against classical Local Optima Networks (LON-d1) side by side
 
