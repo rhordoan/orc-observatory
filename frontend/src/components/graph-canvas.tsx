@@ -96,17 +96,25 @@ export function GraphCanvas({
       isAttractor: attractorSet.has(o.list_idx),
     }));
 
-    const activeOtgEdges = otg.edges.map((e) => ({
-      source: nodes.find((n) => n.idx === e.source) ?? e.source,
-      target: nodes.find((n) => n.idx === e.target) ?? e.target,
-      kappa: e.min_kappa,
-    }));
+    const activeOtgEdges = otg.edges
+      .map((e) => ({
+        source: nodes.find((n) => n.idx === e.source),
+        target: nodes.find((n) => n.idx === e.target),
+        kappa: e.min_kappa,
+      }))
+      .filter((e): e is { source: NodeDatum; target: NodeDatum; kappa: number } =>
+        e.source !== undefined && e.target !== undefined
+      );
 
-    const activeLonEdges = lon ? lon.edges.map((e) => ({
-      source: nodes.find((n) => n.idx === e.source) ?? e.source,
-      target: nodes.find((n) => n.idx === e.target) ?? e.target,
-      kappa: 0,
-    })) : [];
+    const activeLonEdges = lon ? lon.edges
+      .map((e) => ({
+        source: nodes.find((n) => n.idx === e.source),
+        target: nodes.find((n) => n.idx === e.target),
+        kappa: 0,
+      }))
+      .filter((e): e is { source: NodeDatum; target: NodeDatum; kappa: number } =>
+        e.source !== undefined && e.target !== undefined
+      ) : [];
 
     // The simulation runs ONLY on the OTG edges so that OTG clusters funnels nicely
     const simLinks = activeOtgEdges.filter((e) => e.source !== e.target);

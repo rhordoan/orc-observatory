@@ -16,6 +16,8 @@ export default function Home() {
 
   const handleInstanceCreated = useCallback((inst: InstanceData) => {
     setSelectedNode(null);
+    setOtg(null);
+    setLon(null);
     setInstance(inst);
   }, []);
 
