@@ -79,23 +79,37 @@ def build_otg(
     successor = np.full(n, -1, dtype=np.intp)
 
     for i, opt in enumerate(optima):
-        # Compute ORC to all neighbors
         all_orc = compute_all_orc(space, opt.idx, gamma)
         orc_values[i] = all_orc
 
-        # Find the most negatively curved neighbor
-        escape_nbr = min(all_orc, key=all_orc.get)
+        # Try neighbors in ascending curvature order (most negative first).
+        # If the chosen direction self-loops back to the same optimum,
+        # fall through to the next candidate. This prevents MAX-SAT-style
+        # landscapes from collapsing into all-singleton graphs when the
+        # steepest curvature drop lands deep inside the current basin.
+        ranked = sorted(all_orc, key=all_orc.get)
+
+        escape_nbr = ranked[0]
         escape_kappa = all_orc[escape_nbr]
+        dest_idx = i  # default: self-loop
 
-        # Hill-climb from the escape neighbor to reach the destination optimum
-        dest_solution = hill_climb(space, escape_nbr)
+        for candidate in ranked:
+            dest_solution = hill_climb(space, candidate)
+            if dest_solution in opt_idx_map:
+                cand_idx = opt_idx_map[dest_solution]
+            else:
+                cand_idx = i
 
-        if dest_solution in opt_idx_map:
-            dest_idx = opt_idx_map[dest_solution]
+            if cand_idx != i:
+                escape_nbr = candidate
+                escape_kappa = all_orc[candidate]
+                dest_idx = cand_idx
+                break
         else:
-            # Destination is an optimum we haven't seen (shouldn't happen
-            # with exhaustive enumeration, but handle gracefully)
-            dest_idx = i  # self-loop
+            # No neighbor escapes; true sink -- keep the self-loop from
+            # the most-negative-curvature direction for consistency.
+            dest_solution = hill_climb(space, ranked[0])
+            dest_idx = opt_idx_map.get(dest_solution, i)
 
         successor[i] = dest_idx
 
