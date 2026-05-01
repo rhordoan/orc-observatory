@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { Sidebar } from "@/components/sidebar";
 import { GraphCanvas } from "@/components/graph-canvas";
 import { DetailPanel } from "@/components/detail-panel";
@@ -14,11 +14,16 @@ export default function Home() {
   const [selectedNode, setSelectedNode] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
+  const handleInstanceCreated = useCallback((inst: InstanceData) => {
+    setSelectedNode(null);
+    setInstance(inst);
+  }, []);
+
   return (
     <div className="flex h-screen overflow-hidden">
       <Sidebar
         instance={instance}
-        onInstanceCreated={setInstance}
+        onInstanceCreated={handleInstanceCreated}
         onOtgBuilt={setOtg}
         onLonBuilt={setLon}
         isLoading={isLoading}
@@ -37,7 +42,8 @@ export default function Home() {
             onNodeSelect={setSelectedNode}
           />
 
-          {selectedNode !== null && instance && otg && (
+          {selectedNode !== null && instance && otg &&
+            selectedNode < instance.optima.length && (
             <DetailPanel
               instance={instance}
               otg={otg}
