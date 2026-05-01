@@ -54,19 +54,7 @@ export function GraphCanvas({
       "oklch(0.68 0.15 350)",       // pink
     ];
 
-    const activeOtgEdges = otg.edges.map((e) => ({
-      source: e.source,
-      target: e.target,
-      kappa: e.min_kappa,
-    }));
-
-    const activeLonEdges = lon ? lon.edges.map((e) => ({
-      source: e.source,
-      target: e.target,
-      kappa: 0,
-    })) : [];
-
-    const minKappa = d3.min(activeOtgEdges, (d) => d.kappa) ?? -1;
+    const minKappa = d3.min(otg.edges, (d) => d.min_kappa) ?? -1;
     const kappaColor = d3.scaleLinear<string>()
       .domain([minKappa, 0])
       .range(["oklch(0.6 0.2 25)", "oklch(0.65 0.15 150)"])
@@ -94,6 +82,18 @@ export function GraphCanvas({
       funnelIdx: funnelOf.get(o.list_idx) ?? 0,
       isAttractor: attractorSet.has(o.list_idx),
     }));
+
+    const activeOtgEdges = otg.edges.map((e) => ({
+      source: nodes.find((n) => n.idx === e.source) ?? e.source,
+      target: nodes.find((n) => n.idx === e.target) ?? e.target,
+      kappa: e.min_kappa,
+    }));
+
+    const activeLonEdges = lon ? lon.edges.map((e) => ({
+      source: nodes.find((n) => n.idx === e.source) ?? e.source,
+      target: nodes.find((n) => n.idx === e.target) ?? e.target,
+      kappa: 0,
+    })) : [];
 
     // The simulation runs ONLY on the OTG edges so that OTG clusters funnels nicely
     const simLinks = activeOtgEdges.filter((e) => e.source !== e.target);
