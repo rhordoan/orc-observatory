@@ -28,6 +28,9 @@ export function Sidebar({
   const [problemType, setProblemType] = useState("nk");
   const [n, setN] = useState(10);
   const [k, setK] = useState(2);
+  const [mu, setMu] = useState(2);
+  const [nu, setNu] = useState(2);
+  const [gamma, setGamma] = useState(2);
   const [seed, setSeed] = useState<string>("42");
   const [hasGenerated, setHasGenerated] = useState(false);
 
@@ -39,6 +42,9 @@ export function Sidebar({
         problem_type: problemType,
         n,
         k,
+        mu,
+        nu,
+        gamma_wmodel: gamma,
         seed: seed ? parseInt(seed) : null,
       });
       onInstanceCreated(inst);
@@ -54,7 +60,7 @@ export function Sidebar({
     } finally {
       setIsLoading(false);
     }
-  }, [problemType, n, k, seed, onInstanceCreated, onOtgBuilt, onLonBuilt, setIsLoading]);
+  }, [problemType, n, k, mu, nu, gamma, seed, onInstanceCreated, onOtgBuilt, onLonBuilt, setIsLoading]);
 
   // Wow feature: phase K-slider live rebuild
   useEffect(() => {
@@ -63,7 +69,7 @@ export function Sidebar({
       handleGenerate();
     }, 500);
     return () => clearTimeout(timer);
-  }, [k, n, problemType, hasGenerated]); // removed handleGenerate from deps to avoid loop if not stable
+  }, [k, mu, nu, gamma, n, problemType, hasGenerated]); // removed handleGenerate from deps to avoid loop if not stable
 
   function handleAnimate() {
     if (!instance) return;
@@ -181,6 +187,53 @@ export function Sidebar({
               className="mt-2"
             />
           </section>
+        )}
+
+        {problemType === "wmodel" && (
+          <>
+            <section>
+              <Label>
+                mu (neutrality){" "}
+                <span className="text-muted-foreground">{mu}</span>
+              </Label>
+              <Slider
+                value={[mu]}
+                onValueChange={(v) => setMu(Array.isArray(v) ? v[0] : v)}
+                min={1}
+                max={Math.max(n - 1, 1)}
+                step={1}
+                className="mt-2"
+              />
+            </section>
+            <section>
+              <Label>
+                nu (epistasis){" "}
+                <span className="text-muted-foreground">{nu}</span>
+              </Label>
+              <Slider
+                value={[nu]}
+                onValueChange={(v) => setNu(Array.isArray(v) ? v[0] : v)}
+                min={1}
+                max={Math.max(n - 1, 1)}
+                step={1}
+                className="mt-2"
+              />
+            </section>
+            <section>
+              <Label>
+                gamma (ruggedness){" "}
+                <span className="text-muted-foreground">{gamma}</span>
+              </Label>
+              <Slider
+                value={[gamma]}
+                onValueChange={(v) => setGamma(Array.isArray(v) ? v[0] : v)}
+                min={0}
+                max={100}
+                step={1}
+                className="mt-2"
+              />
+            </section>
+          </>
         )}
 
         <section>
