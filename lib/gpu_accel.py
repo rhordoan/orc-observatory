@@ -218,3 +218,85 @@ def _vectorized_hill_climb(fitnesses: np.ndarray, n: int) -> np.ndarray:
         current = best
 
     return current
+
+
+# ---------------------------------------------------------------------------
+# Generic neighbor-table hill climbing (permutation spaces)
+# ---------------------------------------------------------------------------
+
+def gpu_enumerate_optima_table(
+    fitnesses: np.ndarray, neighbor_table: np.ndarray
+) -> np.ndarray:
+    """Parallel hill climbing using a precomputed neighbor-index table.
+
+    Works for any finite search space (TSP 2-opt, QAP swaps, etc.).
+    *neighbor_table* has shape (space_size, degree) where each entry is the
+    index of the corresponding neighbor.
+    """
+    if _has_numba_cuda() and is_gpu_available():
+        return _cuda_hill_climb_table(fitnesses, neighbor_table)
+    return _vectorized_hill_climb_table(fitnesses, neighbor_table)
+
+
+def _cuda_hill_climb_table(
+    fitnesses: np.ndarray, neighbor_table: np.ndarray
+) -> np.ndarray:
+    from numba import cuda
+
+    @cuda.jit
+    def _kernel(fit, nbr_tbl, degree, attractor):
+        tid = cuda.grid(1)
+        if tid >= fit.shape[0]:
+            return
+        current = tid
+        while True:
+            best = current
+            best_f = fit[current]
+            for k in range(degree):
+                nbr = nbr_tbl[current, k]
+                f = fit[nbr]
+                if f > best_f:
+                    best = nbr
+                    best_f = f
+            if best == current:
+                break
+            current = best
+        attractor[tid] = current
+
+    size = len(fitnesses)
+    deg = neighbor_table.shape[1]
+    d_fit = cuda.to_device(fitnesses.astype(np.float64))
+    d_tbl = cuda.to_device(neighbor_table.astype(np.int64))
+    d_attr = cuda.device_array(size, dtype=np.int64)
+
+    threads = 256
+    blocks = (size + threads - 1) // threads
+    _kernel[blocks, threads](d_fit, d_tbl, deg, d_attr)
+
+    return d_attr.copy_to_host()
+
+
+def _vectorized_hill_climb_table(
+    fitnesses: np.ndarray, neighbor_table: np.ndarray
+) -> np.ndarray:
+    """Vectorized NumPy fallback for neighbor-table hill climbing."""
+    size = len(fitnesses)
+    degree = neighbor_table.shape[1]
+    current = np.arange(size, dtype=np.int64)
+
+    for _ in range(size):
+        best = current.copy()
+        best_f = fitnesses[current]
+
+        for k in range(degree):
+            nbrs = neighbor_table[current, k]
+            nbr_f = fitnesses[nbrs]
+            improving = nbr_f > best_f
+            best = np.where(improving, nbrs, best)
+            best_f = np.where(improving, nbr_f, best_f)
+
+        if np.array_equal(best, current):
+            break
+        current = best
+
+    return current

@@ -10,6 +10,8 @@ class ProblemType(str, Enum):
     NK = "nk"
     WMODEL = "wmodel"
     MAXSAT = "maxsat"
+    TSP = "tsp"
+    QAP = "qap"
 
 
 # -- Requests ----------------------------------------------------------------
@@ -75,6 +77,7 @@ class InstanceResponse(BaseModel):
     degree: int
     n_optima: int
     optima: list[OptimumInfo]
+    city_coords: list[list[float]] | None = None
 
 
 class OTGResponse(BaseModel):

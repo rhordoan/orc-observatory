@@ -8,7 +8,10 @@ from backend.models.schemas import (
     InstanceRequest, InstanceResponse, OptimumInfo, ProblemType,
 )
 from backend import cache
-from lib.search_spaces import NKSearchSpace, WModelSearchSpace, MaxSATSearchSpace
+from lib.search_spaces import (
+    NKSearchSpace, WModelSearchSpace, MaxSATSearchSpace,
+    TSPSearchSpace, QAPSearchSpace,
+)
 from lib.hill_climb import enumerate_local_optima
 
 router = APIRouter(prefix="/api/instances", tags=["instances"])
@@ -32,11 +35,19 @@ def create_instance(req: InstanceRequest):
             n_vars=req.n, n_clauses=req.n_clauses,
             clause_length=req.clause_length, seed=req.seed, use_gpu=gpu,
         )
+    elif req.problem_type == ProblemType.TSP:
+        space = TSPSearchSpace(n_cities=req.n, seed=req.seed, use_gpu=gpu)
+    elif req.problem_type == ProblemType.QAP:
+        space = QAPSearchSpace(n=req.n, seed=req.seed, use_gpu=gpu)
     else:
         raise HTTPException(422, f"Unknown problem type: {req.problem_type}")
 
     optima = enumerate_local_optima(space, use_gpu=gpu)
     iid = cache.put(space, optima, req.problem_type.value)
+
+    coords = None
+    if hasattr(space, "coords"):
+        coords = space.coords.tolist()
 
     return InstanceResponse(
         instance_id=iid,
@@ -55,7 +66,17 @@ def create_instance(req: InstanceRequest):
             )
             for i, o in enumerate(optima)
         ],
+        city_coords=coords,
     )
+
+
+@router.get("/{instance_id}/fitness-grid")
+def get_fitness_grid(instance_id: str):
+    """Return the full fitness vector for 3D landscape rendering."""
+    cached = cache.get(instance_id)
+    if cached is None:
+        raise HTTPException(404, "Instance not found")
+    return {"fitness": cached.space.fitnesses.tolist()}
 
 
 @router.get("/{instance_id}", response_model=InstanceResponse)
@@ -67,6 +88,10 @@ def get_instance(instance_id: str):
 
     space = cached.space
     optima = cached.optima
+
+    coords = None
+    if hasattr(space, "coords"):
+        coords = space.coords.tolist()
 
     return InstanceResponse(
         instance_id=instance_id,
@@ -85,4 +110,5 @@ def get_instance(instance_id: str):
             )
             for i, o in enumerate(optima)
         ],
+        city_coords=coords,
     )

@@ -28,10 +28,16 @@ def fitness_distance_correlation(
     global_opt = optima[0]  # optima are sorted by fitness, descending
 
     fitnesses = np.array([o.fitness for o in optima])
-    distances = np.array([
-        _hamming_distance(o.idx, global_opt.idx, _bit_length(space))
-        for o in optima
-    ])
+
+    if hasattr(space, "solution_distance"):
+        distances = np.array([
+            space.solution_distance(o.idx, global_opt.idx) for o in optima
+        ])
+    else:
+        distances = np.array([
+            _hamming_distance(o.idx, global_opt.idx, _bit_length(space))
+            for o in optima
+        ])
 
     if np.std(fitnesses) == 0 or np.std(distances) == 0:
         return 0.0

@@ -55,8 +55,14 @@ def enumerate_local_optima(space: SearchSpace, use_gpu: bool = False) -> list[Lo
     """
     if use_gpu or space.size > 2**14:
         try:
-            from .gpu_accel import gpu_enumerate_optima
-            attractor = gpu_enumerate_optima(space.fitnesses, space.degree)
+            if hasattr(space, "neighbor_table"):
+                from .gpu_accel import gpu_enumerate_optima_table
+                attractor = gpu_enumerate_optima_table(
+                    space.fitnesses, space.neighbor_table
+                )
+            else:
+                from .gpu_accel import gpu_enumerate_optima
+                attractor = gpu_enumerate_optima(space.fitnesses, space.degree)
             return _basins_from_attractor(attractor, space)
         except Exception:
             pass
