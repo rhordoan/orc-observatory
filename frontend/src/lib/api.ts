@@ -1,3 +1,5 @@
+import type { ILSIterationEvent, ILSResult, MetricsData } from "./types";
+
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export async function createInstance(params: {
@@ -82,4 +84,60 @@ export function streamOTG(
   ws.onerror = () => ws.close();
 
   return () => ws.close();
+}
+
+/* ---- F2: ILS Race streaming ---- */
+
+export function streamILS(
+  instanceId: string,
+  budget: number,
+  d_r: number,
+  seed: number | null,
+  paceMs: number,
+  onEvent: (event: ILSIterationEvent) => void,
+  onComplete: (winner: string, results: ILSResult[]) => void
+): () => void {
+  const wsUrl = API.replace(/^http/, "ws");
+  const ws = new WebSocket(`${wsUrl}/ws/ils/stream`);
+
+  ws.onopen = () => {
+    ws.send(
+      JSON.stringify({
+        instance_id: instanceId,
+        budget,
+        d_r,
+        seed,
+        pace_ms: paceMs,
+      })
+    );
+  };
+
+  ws.onmessage = (evt) => {
+    const data = JSON.parse(evt.data);
+    if (data.type === "iteration") {
+      onEvent(data as ILSIterationEvent);
+    } else if (data.type === "complete" || data.type === "cancelled") {
+      onComplete(data.winner ?? "", data.results ?? []);
+      ws.close();
+    }
+  };
+
+  ws.onerror = () => ws.close();
+
+  return () => {
+    try {
+      ws.send(JSON.stringify({ type: "cancel" }));
+    } catch {
+      /* ws already closed */
+    }
+    ws.close();
+  };
+}
+
+/* ---- F2: Difficulty metrics ---- */
+
+export async function fetchMetrics(instanceId: string): Promise<MetricsData> {
+  const res = await fetch(`${API}/api/metrics/${instanceId}`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
 }

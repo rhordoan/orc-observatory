@@ -72,3 +72,28 @@ export interface ORCExplainData {
   x_exclusive_labels: string[];
   y_exclusive_labels: string[];
 }
+
+/* ---- F2: ILS Race types ---- */
+
+export interface ILSIterationEvent {
+  type: "iteration";
+  algo: "orc" | "random" | "rrhc";
+  evals: number;
+  best_fitness: number;
+  current_optimum: number;
+}
+
+export interface ILSResult {
+  algo: string;
+  best_fitness: number;
+  total_evals: number;
+  trajectory: number[];
+}
+
+export interface MetricsData {
+  instance_id: string;
+  fdc: number;
+  autocorrelation_length: number;
+  information_content: number;
+  mean_orc: number;
+}

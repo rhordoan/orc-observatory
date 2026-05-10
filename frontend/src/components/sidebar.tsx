@@ -5,25 +5,48 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
-import { createInstance, buildOTG, buildLON, streamOTG } from "@/lib/api";
-import type { InstanceData, OTGData, LONData } from "@/lib/types";
+import { createInstance, buildOTG, buildLON, streamOTG, fetchMetrics } from "@/lib/api";
+import type {
+  InstanceData,
+  OTGData,
+  LONData,
+  MetricsData,
+  ILSIterationEvent,
+  ILSResult,
+} from "@/lib/types";
 
 interface SidebarProps {
   instance: InstanceData | null;
+  otg: OTGData | null;
   onInstanceCreated: (data: InstanceData) => void;
   onOtgBuilt: (data: OTGData) => void;
   onLonBuilt: (data: LONData) => void;
   isLoading: boolean;
   setIsLoading: (v: boolean) => void;
+  metrics: MetricsData | null;
+  onMetrics: (data: MetricsData) => void;
+  isRacing: boolean;
+  raceResults: ILSResult[] | null;
+  raceEvents: ILSIterationEvent[];
+  onStartRace: (budget: number, d_r: number, seed: number | null, paceMs: number) => void;
+  onCancelRace: () => void;
 }
 
 export function Sidebar({
   instance,
+  otg,
   onInstanceCreated,
   onOtgBuilt,
   onLonBuilt,
   isLoading,
   setIsLoading,
+  metrics,
+  onMetrics,
+  isRacing,
+  raceResults,
+  raceEvents,
+  onStartRace,
+  onCancelRace,
 }: SidebarProps) {
   const [problemType, setProblemType] = useState("nk");
   const [n, setN] = useState(10);
@@ -33,6 +56,11 @@ export function Sidebar({
   const [gamma, setGamma] = useState(2);
   const [seed, setSeed] = useState<string>("42");
   const [hasGenerated, setHasGenerated] = useState(false);
+
+  /* Race controls */
+  const [budget, setBudget] = useState(5000);
+  const [dR, setDR] = useState(2);
+  const [paceMs, setPaceMs] = useState(50);
 
   const handleGenerate = useCallback(async () => {
     setIsLoading(true);
@@ -55,21 +83,24 @@ export function Sidebar({
       ]);
       onOtgBuilt(otgResult);
       onLonBuilt(lonResult);
+
+      fetchMetrics(inst.instance_id)
+        .then(onMetrics)
+        .catch(() => {});
     } catch (err) {
       console.error("Generation failed:", err);
     } finally {
       setIsLoading(false);
     }
-  }, [problemType, n, k, mu, nu, gamma, seed, onInstanceCreated, onOtgBuilt, onLonBuilt, setIsLoading]);
+  }, [problemType, n, k, mu, nu, gamma, seed, onInstanceCreated, onOtgBuilt, onLonBuilt, setIsLoading, onMetrics]);
 
-  // Wow feature: phase K-slider live rebuild
   useEffect(() => {
     if (!hasGenerated) return;
     const timer = setTimeout(() => {
       handleGenerate();
     }, 500);
     return () => clearTimeout(timer);
-  }, [k, mu, nu, gamma, n, problemType, hasGenerated]); // removed handleGenerate from deps to avoid loop if not stable
+  }, [k, mu, nu, gamma, n, problemType, hasGenerated]);
 
   function handleAnimate() {
     if (!instance) return;
@@ -88,7 +119,7 @@ export function Sidebar({
     };
     onOtgBuilt({ ...partialOtg });
 
-    const cancel = streamOTG(
+    streamOTG(
       instance.instance_id,
       1.0,
       (msg) => {
@@ -118,13 +149,40 @@ export function Sidebar({
         }
       },
       () => {
-        // Fetch full OTG at the end to get orc_values which aren't streamed
         buildOTG(instance.instance_id).then((fullOtg) => {
           onOtgBuilt(fullOtg);
           setIsLoading(false);
         });
       }
     );
+  }
+
+  function handleExportCSV() {
+    if (!raceEvents.length) return;
+
+    const header = "algo,evals,best_fitness\n";
+    const rows = raceEvents
+      .map((e) => `${e.algo},${e.evals},${e.best_fitness}`)
+      .join("\n");
+
+    let csv = header + rows;
+
+    if (metrics) {
+      csv +=
+        "\n\nmetric,value\n" +
+        `fdc,${metrics.fdc}\n` +
+        `autocorrelation_length,${metrics.autocorrelation_length}\n` +
+        `information_content,${metrics.information_content}\n` +
+        `mean_orc,${metrics.mean_orc}`;
+    }
+
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `orc_race_${instance?.instance_id ?? "export"}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   return (
@@ -136,6 +194,7 @@ export function Sidebar({
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-5">
+        {/* ---- Problem configuration ---- */}
         <section>
           <Label>Problem type</Label>
           <div className="flex gap-1.5 mt-1.5">
@@ -273,6 +332,7 @@ export function Sidebar({
           </Button>
         </div>
 
+        {/* ---- Instance info card ---- */}
         {instance && (
           <Card className="p-3 space-y-1.5">
             <div className="flex items-center justify-between">
@@ -285,6 +345,130 @@ export function Sidebar({
             <Row label="Degree" value={instance.degree} />
             <Row label="Local optima" value={instance.n_optima} />
           </Card>
+        )}
+
+        {/* ---- Difficulty metrics card (FR6) ---- */}
+        {metrics && (
+          <Card className="p-3 space-y-1.5">
+            <span className="text-xs text-muted-foreground">
+              Difficulty Metrics
+            </span>
+            <Row label="FDC" value={metrics.fdc.toFixed(3)} />
+            <Row
+              label="Autocorrelation"
+              value={metrics.autocorrelation_length.toFixed(1)}
+            />
+            <Row
+              label="Info content"
+              value={metrics.information_content.toFixed(3)}
+            />
+            <div className="flex justify-between text-xs">
+              <span className="text-muted-foreground">Mean ORC</span>
+              <span
+                className={`font-mono tabular-nums ${
+                  metrics.mean_orc < -0.3
+                    ? "text-primary"
+                    : "text-foreground"
+                }`}
+              >
+                {metrics.mean_orc.toFixed(3)}
+              </span>
+            </div>
+          </Card>
+        )}
+
+        {/* ---- Algorithm Race section ---- */}
+        {otg && (
+          <>
+            <div className="border-t border-border pt-4">
+              <Label>Algorithm Race</Label>
+            </div>
+
+            <section>
+              <Label>
+                Budget (FE){" "}
+                <span className="text-muted-foreground">{budget}</span>
+              </Label>
+              <Slider
+                value={[budget]}
+                onValueChange={(v) =>
+                  setBudget(Array.isArray(v) ? v[0] : v)
+                }
+                min={1000}
+                max={20000}
+                step={1000}
+                className="mt-2"
+              />
+            </section>
+
+            <section>
+              <Label>
+                d_r (random moves){" "}
+                <span className="text-muted-foreground">{dR}</span>
+              </Label>
+              <Slider
+                value={[dR]}
+                onValueChange={(v) => setDR(Array.isArray(v) ? v[0] : v)}
+                min={1}
+                max={5}
+                step={1}
+                className="mt-2"
+              />
+            </section>
+
+            <section>
+              <Label>
+                Pace (ms){" "}
+                <span className="text-muted-foreground">{paceMs}</span>
+              </Label>
+              <Slider
+                value={[paceMs]}
+                onValueChange={(v) =>
+                  setPaceMs(Array.isArray(v) ? v[0] : v)
+                }
+                min={0}
+                max={200}
+                step={10}
+                className="mt-2"
+              />
+            </section>
+
+            <div className="flex gap-2">
+              {isRacing ? (
+                <Button
+                  variant="secondary"
+                  onClick={onCancelRace}
+                  className="flex-1"
+                >
+                  Cancel
+                </Button>
+              ) : (
+                <Button
+                  onClick={() =>
+                    onStartRace(
+                      budget,
+                      dR,
+                      seed ? parseInt(seed) : null,
+                      paceMs
+                    )
+                  }
+                  disabled={isLoading}
+                  className="flex-1"
+                >
+                  Run Race
+                </Button>
+              )}
+
+              <Button
+                variant="secondary"
+                onClick={handleExportCSV}
+                disabled={raceEvents.length === 0}
+                title="Export race results as CSV"
+              >
+                CSV
+              </Button>
+            </div>
+          </>
         )}
       </div>
     </aside>

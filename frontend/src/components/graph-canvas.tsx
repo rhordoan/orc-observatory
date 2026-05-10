@@ -5,12 +5,19 @@ import * as d3 from "d3";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { InstanceData, OTGData, LONData } from "@/lib/types";
 
+const TRAJECTORY_COLORS: Record<string, string> = {
+  orc: "oklch(0.795 0.148 71.1)",
+  random: "oklch(0.6 0.15 250)",
+  rrhc: "oklch(0.58 0.01 75)",
+};
+
 interface GraphCanvasProps {
   instance: InstanceData | null;
   otg: OTGData | null;
   lon: LONData | null;
   selectedNode: number | null;
   onNodeSelect: (idx: number | null) => void;
+  trajectories?: Record<string, number[]> | null;
 }
 
 type ViewMode = "otg" | "lon" | "side-by-side";
@@ -21,6 +28,7 @@ export function GraphCanvas({
   lon,
   selectedNode,
   onNodeSelect,
+  trajectories,
 }: GraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("otg");
@@ -212,6 +220,27 @@ export function GraphCanvas({
         );
       }
 
+      // FR7.7: Trajectory overlay rings
+      const trajGroup = g.append("g").attr("class", "trajectories");
+      if (isOtg && trajectories) {
+        Object.entries(trajectories).forEach(([algo, visited], ti) => {
+          const visitedSet = new Set(visited);
+          const ringNodes = nodes.filter((n) => visitedSet.has(n.idx));
+          trajGroup
+            .selectAll(`.traj-${algo}`)
+            .data(ringNodes)
+            .join("circle")
+            .attr("class", `traj-${algo}`)
+            .attr("r", (d) => nodeRadius(d.basinSize) + 3 + ti * 3)
+            .attr("fill", "none")
+            .attr("stroke", TRAJECTORY_COLORS[algo] ?? "#888")
+            .attr("stroke-width", 2)
+            .attr("stroke-dasharray", algo === "rrhc" ? "3,3" : "none")
+            .attr("opacity", 0.7)
+            .attr("pointer-events", "none");
+        });
+      }
+
       const labelSel = g.append("g").attr("class", "labels")
         .selectAll("text")
         .data(nodes)
@@ -235,7 +264,7 @@ export function GraphCanvas({
         .attr("letter-spacing", "0.05em")
         .text(isOtg ? "ORC Transition Graph (OTG)" : "Local Optima Network (LON-d1)");
 
-      return { linkSel, nodeSel, labelSel };
+      return { linkSel, nodeSel, labelSel, trajGroup };
     }
 
     const graphs: any[] = [];
@@ -249,7 +278,7 @@ export function GraphCanvas({
     }
 
     simulation.on("tick", () => {
-      graphs.forEach(({ linkSel, nodeSel, labelSel }) => {
+      graphs.forEach(({ linkSel, nodeSel, labelSel, trajGroup }) => {
         linkSel
           .attr("x1", (d: any) => d.source.x ?? 0)
           .attr("y1", (d: any) => d.source.y ?? 0)
@@ -270,13 +299,14 @@ export function GraphCanvas({
 
         nodeSel.attr("cx", (d: any) => d.x ?? 0).attr("cy", (d: any) => d.y ?? 0);
         labelSel.attr("x", (d: any) => d.x ?? 0).attr("y", (d: any) => d.y ?? 0);
+        trajGroup.selectAll("circle").attr("cx", (d: any) => d.x ?? 0).attr("cy", (d: any) => d.y ?? 0);
       });
     });
 
     return () => {
       simulation.stop();
     };
-  }, [instance, otg, lon, viewMode]);
+  }, [instance, otg, lon, viewMode, trajectories]);
 
   return (
     <div className="flex-1 flex flex-col min-w-0 relative">
