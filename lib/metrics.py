@@ -10,6 +10,7 @@ import numpy as np
 
 from .search_spaces.protocol import SearchSpace
 from .hill_climb import LocalOptimum
+from .orc import compute_all_orc
 
 
 def fitness_distance_correlation(
@@ -131,6 +132,29 @@ def information_content(
             entropy -= p * np.log2(p)
 
     return float(entropy)
+
+
+def mean_orc(
+    space: SearchSpace,
+    optima: list[LocalOptimum],
+    gamma: float = 1.0,
+) -> float:
+    """Grand mean of ORC values across all local optima neighbors.
+
+    For each optimum, compute ORC to every neighbor and average; then
+    average across all optima.  This is the difficulty predictor from
+    Table 7 of the paper (rho = -0.670 with HC success rate).
+    """
+    if not optima:
+        return 0.0
+
+    optimum_means: list[float] = []
+    for opt in optima:
+        orc_vals = compute_all_orc(space, opt.idx, gamma)
+        if orc_vals:
+            optimum_means.append(float(np.mean(list(orc_vals.values()))))
+
+    return float(np.mean(optimum_means)) if optimum_means else 0.0
 
 
 def _hamming_distance(a: int, b: int, n_bits: int) -> int:
