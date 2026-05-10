@@ -13,7 +13,7 @@ class NKSearchSpace:
     flip, giving degree k = N.
     """
 
-    def __init__(self, n: int, k: int, seed: int | None = None) -> None:
+    def __init__(self, n: int, k: int, seed: int | None = None, use_gpu: bool = False) -> None:
         if not 1 <= k < n:
             raise ValueError(f"Need 1 <= K < N, got K={k}, N={n}")
         self._n = n
@@ -29,11 +29,15 @@ class NKSearchSpace:
         # Lookup tables: for each locus, 2^(K+1) random contributions
         self._tables = self._rng.random((n, 2 ** (k + 1)))
 
-        # Pre-compute all fitness values for fast lookup
         self._size = 2**n
-        self._fitnesses = np.array(
-            [self._compute_fitness(idx) for idx in range(self._size)]
-        )
+
+        if use_gpu:
+            from ..gpu_accel import gpu_compute_fitness_nk
+            self._fitnesses = gpu_compute_fitness_nk(n, k, self._deps, self._tables)
+        else:
+            self._fitnesses = np.array(
+                [self._compute_fitness(idx) for idx in range(self._size)]
+            )
 
     # -- Protocol implementation ------------------------------------------
 

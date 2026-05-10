@@ -44,13 +44,23 @@ def hill_climb(space: SearchSpace, start: int) -> int:
         current = best_nbr
 
 
-def enumerate_local_optima(space: SearchSpace) -> list[LocalOptimum]:
+def enumerate_local_optima(space: SearchSpace, use_gpu: bool = False) -> list[LocalOptimum]:
     """Exhaustive enumeration: hill-climb from every solution.
 
-    Only practical for small spaces (|S| <= 2^16 or so).
+    When *use_gpu* is True (and a CUDA GPU is available), fitness
+    precomputation and hill climbing run on the GPU via Numba CUDA.
+    Otherwise falls back to vectorized NumPy or plain Python loops.
+
     Returns local optima sorted by fitness (descending).
     """
-    # Map each solution to its local optimum via hill climbing
+    if use_gpu or space.size > 2**14:
+        try:
+            from .gpu_accel import gpu_enumerate_optima
+            attractor = gpu_enumerate_optima(space.fitnesses, space.degree)
+            return _basins_from_attractor(attractor, space)
+        except Exception:
+            pass
+
     attractor = np.full(space.size, -1, dtype=np.intp)
     for s in range(space.size):
         if attractor[s] == -1:
@@ -61,16 +71,19 @@ def enumerate_local_optima(space: SearchSpace) -> list[LocalOptimum]:
                 attractor[current] = -2  # mark as visiting
                 current = hill_climb(space, current)
                 if current in path:
-                    # Already visited in this path, it's the optimum
                     break
             opt = current
             for node in path:
                 attractor[node] = opt
 
-    # Group solutions by their attractor
+    return _basins_from_attractor(attractor, space)
+
+
+def _basins_from_attractor(attractor: np.ndarray, space: SearchSpace) -> list[LocalOptimum]:
+    """Group solutions by attractor and return sorted LocalOptimum list."""
     basins: dict[int, list[int]] = {}
-    for s in range(space.size):
-        opt = attractor[s]
+    for s in range(len(attractor)):
+        opt = int(attractor[s])
         basins.setdefault(opt, []).append(s)
 
     optima = [

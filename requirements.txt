@@ -5,3 +5,8 @@ fastapi>=0.109.0
 uvicorn>=0.27.0
 pydantic>=2.5.0
 websockets>=12.0
+
+# Optional GPU acceleration (install separately if CUDA GPU available)
+# pip install cupy-cuda12x numba
+# cupy-cuda12x>=13.0.0
+# numba>=0.59.0

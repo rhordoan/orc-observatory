@@ -26,6 +26,7 @@ class WModelSearchSpace:
         nu: int = 1,
         gamma: int = 0,
         seed: int | None = None,
+        use_gpu: bool = False,
     ) -> None:
         if mu < 1 or nu < 1:
             raise ValueError("mu and nu must be >= 1")
@@ -36,14 +37,9 @@ class WModelSearchSpace:
         self._gamma = gamma
         self._rng = np.random.default_rng(seed)
 
-        # Effective dimension after neutrality reduction
         self._n_eff = n // mu
-
-        # Build a simple base landscape (OneMax on the effective bits)
-        # then apply ruggedness permutation to fitness values
         self._size = 2**n
 
-        # Ruggedness permutation: maps integer fitness ranks to shuffled ranks
         max_ones = self._n_eff
         perm = np.arange(max_ones + 1, dtype=np.float64)
         if gamma > 0:
@@ -53,10 +49,13 @@ class WModelSearchSpace:
                     perm[i], perm[j] = perm[j], perm[i]
         self._ruggedness_perm = perm
 
-        # Pre-compute all fitness values
-        self._fitnesses = np.array(
-            [self._compute_fitness(idx) for idx in range(self._size)]
-        )
+        if use_gpu:
+            from ..gpu_accel import gpu_compute_fitness_wmodel
+            self._fitnesses = gpu_compute_fitness_wmodel(n, mu, nu, self._ruggedness_perm)
+        else:
+            self._fitnesses = np.array(
+                [self._compute_fitness(idx) for idx in range(self._size)]
+            )
 
     @property
     def name(self) -> str:

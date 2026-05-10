@@ -8,6 +8,8 @@ reveal the funnel structure of the landscape.
 
 from __future__ import annotations
 
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -78,20 +80,30 @@ def build_otg(
     # successor[i] = j means optimum i points to optimum j in the OTG
     successor = np.full(n, -1, dtype=np.intp)
 
-    for i, opt in enumerate(optima):
-        all_orc = compute_all_orc(space, opt.idx, gamma)
-        orc_values[i] = all_orc
+    # Phase 1: compute ORC values for all optima (parallelizable).
+    # ThreadPoolExecutor works because scipy.optimize.linear_sum_assignment
+    # releases the GIL, giving true parallelism on the C-level hot path.
+    n_workers = min(os.cpu_count() or 4, n, 8)
+    if on_edge is None and n_workers > 1 and n > 4:
+        with ThreadPoolExecutor(max_workers=n_workers) as pool:
+            futures = {
+                pool.submit(compute_all_orc, space, opt.idx, gamma): i
+                for i, opt in enumerate(optima)
+            }
+            for future in as_completed(futures):
+                orc_values[futures[future]] = future.result()
+    else:
+        for i, opt in enumerate(optima):
+            orc_values[i] = compute_all_orc(space, opt.idx, gamma)
 
-        # Try neighbors in ascending curvature order (most negative first).
-        # If the chosen direction self-loops back to the same optimum,
-        # fall through to the next candidate. This prevents MAX-SAT-style
-        # landscapes from collapsing into all-singleton graphs when the
-        # steepest curvature drop lands deep inside the current basin.
+    # Phase 2: resolve edges (sequential, needs hill climbing + opt_idx_map).
+    for i, opt in enumerate(optima):
+        all_orc = orc_values[i]
         ranked = sorted(all_orc, key=all_orc.get)
 
         escape_nbr = ranked[0]
         escape_kappa = all_orc[escape_nbr]
-        dest_idx = i  # default: self-loop
+        dest_idx = i
 
         for candidate in ranked:
             dest_solution = hill_climb(space, candidate)
@@ -106,8 +118,6 @@ def build_otg(
                 dest_idx = cand_idx
                 break
         else:
-            # No neighbor escapes; true sink -- keep the self-loop from
-            # the most-negative-curvature direction for consistency.
             dest_solution = hill_climb(space, ranked[0])
             dest_idx = opt_idx_map.get(dest_solution, i)
 

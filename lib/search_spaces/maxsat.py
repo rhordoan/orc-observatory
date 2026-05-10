@@ -19,25 +19,21 @@ class MaxSATSearchSpace:
         n_clauses: int | None = None,
         clause_length: int = 3,
         seed: int | None = None,
+        use_gpu: bool = False,
     ) -> None:
         self._n = n_vars
         self._clause_length = clause_length
         self._rng = np.random.default_rng(seed)
 
         if n_clauses is None:
-            # Default ratio alpha ~= 4.27 for 3-SAT phase transition
             n_clauses = int(4.27 * n_vars)
         self._n_clauses = n_clauses
 
-        # Generate random clauses: each clause is an array of signed literals
-        # Positive = variable appears positive, negative = negated
         self._clauses = []
         for _ in range(n_clauses):
             variables = self._rng.choice(n_vars, size=clause_length, replace=False)
             signs = self._rng.choice([-1, 1], size=clause_length)
             self._clauses.append(variables * signs + signs)
-            # Store as (var_index, is_positive) pairs for clarity
-        # Re-generate in a cleaner format
         self._clause_vars = np.zeros((n_clauses, clause_length), dtype=np.intp)
         self._clause_signs = np.zeros((n_clauses, clause_length), dtype=np.intp)
         for i in range(n_clauses):
@@ -46,10 +42,15 @@ class MaxSATSearchSpace:
 
         self._size = 2**n_vars
 
-        # Pre-compute fitness for all assignments
-        self._fitnesses = np.array(
-            [self._compute_fitness(idx) for idx in range(self._size)]
-        )
+        if use_gpu:
+            from ..gpu_accel import gpu_compute_fitness_maxsat
+            self._fitnesses = gpu_compute_fitness_maxsat(
+                n_vars, self._clause_vars, self._clause_signs, self._n_clauses
+            )
+        else:
+            self._fitnesses = np.array(
+                [self._compute_fitness(idx) for idx in range(self._size)]
+            )
 
     @property
     def name(self) -> str:
