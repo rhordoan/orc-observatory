@@ -17,23 +17,25 @@ router = APIRouter(prefix="/api/instances", tags=["instances"])
 @router.post("", response_model=InstanceResponse)
 def create_instance(req: InstanceRequest):
     """Generate a landscape instance and cache it."""
+    gpu = req.use_gpu
     if req.problem_type == ProblemType.NK:
         if req.k >= req.n:
             raise HTTPException(422, f"K must be < N, got K={req.k}, N={req.n}")
-        space = NKSearchSpace(n=req.n, k=req.k, seed=req.seed)
+        space = NKSearchSpace(n=req.n, k=req.k, seed=req.seed, use_gpu=gpu)
     elif req.problem_type == ProblemType.WMODEL:
         space = WModelSearchSpace(
-            n=req.n, mu=req.mu, nu=req.nu, gamma=req.gamma_wmodel, seed=req.seed,
+            n=req.n, mu=req.mu, nu=req.nu, gamma=req.gamma_wmodel,
+            seed=req.seed, use_gpu=gpu,
         )
     elif req.problem_type == ProblemType.MAXSAT:
         space = MaxSATSearchSpace(
             n_vars=req.n, n_clauses=req.n_clauses,
-            clause_length=req.clause_length, seed=req.seed,
+            clause_length=req.clause_length, seed=req.seed, use_gpu=gpu,
         )
     else:
         raise HTTPException(422, f"Unknown problem type: {req.problem_type}")
 
-    optima = enumerate_local_optima(space)
+    optima = enumerate_local_optima(space, use_gpu=gpu)
     iid = cache.put(space, optima, req.problem_type.value)
 
     return InstanceResponse(

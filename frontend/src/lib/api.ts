@@ -2,6 +2,17 @@ import type { ILSIterationEvent, ILSResult, MetricsData } from "./types";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+export async function fetchGpuStatus(): Promise<boolean> {
+  try {
+    const res = await fetch(`${API}/api/gpu/status`);
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data.available === true;
+  } catch {
+    return false;
+  }
+}
+
 export async function createInstance(params: {
   problem_type: string;
   n: number;
@@ -12,6 +23,7 @@ export async function createInstance(params: {
   n_clauses?: number | null;
   clause_length?: number;
   seed?: number | null;
+  use_gpu?: boolean;
 }) {
   const res = await fetch(`${API}/api/instances`, {
     method: "POST",

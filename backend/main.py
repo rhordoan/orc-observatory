@@ -36,3 +36,9 @@ app.include_router(metrics.router)
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/gpu/status")
+def gpu_status():
+    from lib.gpu_accel import is_gpu_available
+    return {"available": is_gpu_available()}

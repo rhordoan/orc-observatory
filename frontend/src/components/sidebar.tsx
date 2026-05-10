@@ -11,8 +11,6 @@ import type {
   OTGData,
   LONData,
   MetricsData,
-  ILSIterationEvent,
-  ILSResult,
 } from "@/lib/types";
 
 interface SidebarProps {
@@ -23,13 +21,12 @@ interface SidebarProps {
   onLonBuilt: (data: LONData) => void;
   isLoading: boolean;
   setIsLoading: (v: boolean) => void;
-  metrics: MetricsData | null;
   onMetrics: (data: MetricsData) => void;
-  isRacing: boolean;
-  raceResults: ILSResult[] | null;
-  raceEvents: ILSIterationEvent[];
-  onStartRace: (budget: number, d_r: number, seed: number | null, paceMs: number) => void;
-  onCancelRace: () => void;
+  seed: string;
+  onSeedChange: (s: string) => void;
+  gpuAvailable: boolean;
+  useGpu: boolean;
+  onToggleGpu: () => void;
 }
 
 export function Sidebar({
@@ -40,13 +37,12 @@ export function Sidebar({
   onLonBuilt,
   isLoading,
   setIsLoading,
-  metrics,
   onMetrics,
-  isRacing,
-  raceResults,
-  raceEvents,
-  onStartRace,
-  onCancelRace,
+  seed,
+  onSeedChange,
+  gpuAvailable,
+  useGpu,
+  onToggleGpu,
 }: SidebarProps) {
   const [problemType, setProblemType] = useState("nk");
   const [n, setN] = useState(10);
@@ -54,13 +50,9 @@ export function Sidebar({
   const [mu, setMu] = useState(2);
   const [nu, setNu] = useState(2);
   const [gamma, setGamma] = useState(2);
-  const [seed, setSeed] = useState<string>("42");
   const [hasGenerated, setHasGenerated] = useState(false);
 
-  /* Race controls */
-  const [budget, setBudget] = useState(5000);
-  const [dR, setDR] = useState(2);
-  const [paceMs, setPaceMs] = useState(50);
+  const nMax = useGpu ? 20 : 14;
 
   const handleGenerate = useCallback(async () => {
     setIsLoading(true);
@@ -74,6 +66,7 @@ export function Sidebar({
         nu,
         gamma_wmodel: gamma,
         seed: seed ? parseInt(seed) : null,
+        use_gpu: useGpu,
       });
       onInstanceCreated(inst);
 
@@ -92,7 +85,7 @@ export function Sidebar({
     } finally {
       setIsLoading(false);
     }
-  }, [problemType, n, k, mu, nu, gamma, seed, onInstanceCreated, onOtgBuilt, onLonBuilt, setIsLoading, onMetrics]);
+  }, [problemType, n, k, mu, nu, gamma, seed, useGpu, onInstanceCreated, onOtgBuilt, onLonBuilt, setIsLoading, onMetrics]);
 
   useEffect(() => {
     if (!hasGenerated) return;
@@ -157,34 +150,6 @@ export function Sidebar({
     );
   }
 
-  function handleExportCSV() {
-    if (!raceEvents.length) return;
-
-    const header = "algo,evals,best_fitness\n";
-    const rows = raceEvents
-      .map((e) => `${e.algo},${e.evals},${e.best_fitness}`)
-      .join("\n");
-
-    let csv = header + rows;
-
-    if (metrics) {
-      csv +=
-        "\n\nmetric,value\n" +
-        `fdc,${metrics.fdc}\n` +
-        `autocorrelation_length,${metrics.autocorrelation_length}\n` +
-        `information_content,${metrics.information_content}\n` +
-        `mean_orc,${metrics.mean_orc}`;
-    }
-
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `orc_race_${instance?.instance_id ?? "export"}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
   return (
     <aside className="w-[260px] shrink-0 border-r border-border bg-sidebar text-sidebar-foreground flex flex-col">
       <div className="h-14 flex items-center px-4 border-b border-border">
@@ -194,6 +159,41 @@ export function Sidebar({
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-5">
+        {/* ---- GPU toggle ---- */}
+        {gpuAvailable && (
+          <button
+            onClick={onToggleGpu}
+            className={`
+              w-full flex items-center justify-between px-3 py-2 text-xs rounded-md border transition-colors
+              ${
+                useGpu
+                  ? "border-green-500/40 bg-green-500/10 text-green-400"
+                  : "border-border text-muted-foreground hover:border-primary/40"
+              }
+            `}
+          >
+            <span className="flex items-center gap-2">
+              <span className="font-medium">GPU Acceleration</span>
+              {useGpu && (
+                <span className="text-[9px] uppercase tracking-wider opacity-70">
+                  N up to {nMax}
+                </span>
+              )}
+            </span>
+            <span
+              className={`w-8 h-4 rounded-full relative transition-colors ${
+                useGpu ? "bg-green-500/60" : "bg-border"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform ${
+                  useGpu ? "translate-x-4" : "translate-x-0.5"
+                }`}
+              />
+            </span>
+          </button>
+        )}
+
         {/* ---- Problem configuration ---- */}
         <section>
           <Label>Problem type</Label>
@@ -225,7 +225,7 @@ export function Sidebar({
             value={[n]}
             onValueChange={(v) => setN(Array.isArray(v) ? v[0] : v)}
             min={4}
-            max={14}
+            max={nMax}
             step={1}
             className="mt-2"
           />
@@ -300,7 +300,7 @@ export function Sidebar({
           <input
             type="text"
             value={seed}
-            onChange={(e) => setSeed(e.target.value)}
+            onChange={(e) => onSeedChange(e.target.value)}
             placeholder="optional"
             className="mt-1.5 w-full bg-input/50 border border-border rounded-md px-2.5 py-1.5 text-sm font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
           />
@@ -347,129 +347,6 @@ export function Sidebar({
           </Card>
         )}
 
-        {/* ---- Difficulty metrics card (FR6) ---- */}
-        {metrics && (
-          <Card className="p-3 space-y-1.5">
-            <span className="text-xs text-muted-foreground">
-              Difficulty Metrics
-            </span>
-            <Row label="FDC" value={metrics.fdc.toFixed(3)} />
-            <Row
-              label="Autocorrelation"
-              value={metrics.autocorrelation_length.toFixed(1)}
-            />
-            <Row
-              label="Info content"
-              value={metrics.information_content.toFixed(3)}
-            />
-            <div className="flex justify-between text-xs">
-              <span className="text-muted-foreground">Mean ORC</span>
-              <span
-                className={`font-mono tabular-nums ${
-                  metrics.mean_orc < -0.3
-                    ? "text-primary"
-                    : "text-foreground"
-                }`}
-              >
-                {metrics.mean_orc.toFixed(3)}
-              </span>
-            </div>
-          </Card>
-        )}
-
-        {/* ---- Algorithm Race section ---- */}
-        {otg && (
-          <>
-            <div className="border-t border-border pt-4">
-              <Label>Algorithm Race</Label>
-            </div>
-
-            <section>
-              <Label>
-                Budget (FE){" "}
-                <span className="text-muted-foreground">{budget}</span>
-              </Label>
-              <Slider
-                value={[budget]}
-                onValueChange={(v) =>
-                  setBudget(Array.isArray(v) ? v[0] : v)
-                }
-                min={1000}
-                max={20000}
-                step={1000}
-                className="mt-2"
-              />
-            </section>
-
-            <section>
-              <Label>
-                d_r (random moves){" "}
-                <span className="text-muted-foreground">{dR}</span>
-              </Label>
-              <Slider
-                value={[dR]}
-                onValueChange={(v) => setDR(Array.isArray(v) ? v[0] : v)}
-                min={1}
-                max={5}
-                step={1}
-                className="mt-2"
-              />
-            </section>
-
-            <section>
-              <Label>
-                Pace (ms){" "}
-                <span className="text-muted-foreground">{paceMs}</span>
-              </Label>
-              <Slider
-                value={[paceMs]}
-                onValueChange={(v) =>
-                  setPaceMs(Array.isArray(v) ? v[0] : v)
-                }
-                min={0}
-                max={200}
-                step={10}
-                className="mt-2"
-              />
-            </section>
-
-            <div className="flex gap-2">
-              {isRacing ? (
-                <Button
-                  variant="secondary"
-                  onClick={onCancelRace}
-                  className="flex-1"
-                >
-                  Cancel
-                </Button>
-              ) : (
-                <Button
-                  onClick={() =>
-                    onStartRace(
-                      budget,
-                      dR,
-                      seed ? parseInt(seed) : null,
-                      paceMs
-                    )
-                  }
-                  disabled={isLoading}
-                  className="flex-1"
-                >
-                  Run Race
-                </Button>
-              )}
-
-              <Button
-                variant="secondary"
-                onClick={handleExportCSV}
-                disabled={raceEvents.length === 0}
-                title="Export race results as CSV"
-              >
-                CSV
-              </Button>
-            </div>
-          </>
-        )}
       </div>
     </aside>
   );
