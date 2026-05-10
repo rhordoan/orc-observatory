@@ -117,3 +117,11 @@ class ORCExplainResponse(BaseModel):
     shared_labels: list[str]
     x_exclusive_labels: list[str]
     y_exclusive_labels: list[str]
+
+
+class MetricsResponse(BaseModel):
+    instance_id: str
+    fdc: float
+    autocorrelation_length: float
+    information_content: float
+    mean_orc: float

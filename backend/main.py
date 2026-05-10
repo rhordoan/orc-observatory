@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.routers import instances, otg, lon, orc_explain
+from backend.routers import instances, otg, lon, orc_explain, ils, metrics
 
 app = FastAPI(
     title="ORC Observatory API",
@@ -29,6 +29,8 @@ app.include_router(instances.router)
 app.include_router(otg.router)
 app.include_router(lon.router)
 app.include_router(orc_explain.router)
+app.include_router(ils.router)
+app.include_router(metrics.router)
 
 
 @app.get("/api/health")
