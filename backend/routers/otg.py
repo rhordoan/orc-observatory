@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import asyncio
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
@@ -56,10 +56,10 @@ def build_otg_sync(req: OTGRequest):
 
 @router.websocket("/ws/otg/stream")
 async def stream_otg(ws: WebSocket):
-    """Stream OTG construction step by step.
+    """Stream OTG construction incrementally.
 
     Client sends: {"instance_id": "...", "gamma": 1.0}
-    Server sends events: computing_orc, edge_added, funnel_formed, complete
+    Server sends events as ORC is computed and edges are resolved in real time.
     """
     await ws.accept()
     try:
@@ -74,46 +74,50 @@ async def stream_otg(ws: WebSocket):
             return
 
         n_optima = len(cached.optima)
-        edges_so_far: list[dict] = []
+        queue: asyncio.Queue = asyncio.Queue()
+        loop = asyncio.get_running_loop()
 
-        async def on_edge(edge: OTGEdge):
-            edges_so_far.append({
-                "source": edge.source,
-                "target": edge.target,
-                "min_kappa": edge.min_kappa,
-                "via_neighbor": edge.via_neighbor,
-            })
-            await ws.send_json({
-                "type": "edge_added",
-                "source": edge.source,
-                "target": edge.target,
-                "min_kappa": round(edge.min_kappa, 4),
-                "dest_fitness": round(cached.optima[edge.target].fitness, 4),
-                "progress": f"{len(edges_so_far)}/{n_optima}",
-            })
+        def on_computing(i: int):
+            loop.call_soon_threadsafe(
+                queue.put_nowait,
+                {"type": "computing_orc", "optimum_idx": i, "progress": f"{i + 1}/{n_optima}"},
+            )
 
-        # Build OTG with streaming callback
-        # Since build_otg is sync, we wrap the callback
-        result = build_otg(cached.space, cached.optima, gamma=gamma)
+        def on_edge(edge: OTGEdge):
+            loop.call_soon_threadsafe(
+                queue.put_nowait,
+                {
+                    "type": "edge_added",
+                    "source": edge.source,
+                    "target": edge.target,
+                    "min_kappa": round(edge.min_kappa, 4),
+                    "via_neighbor": edge.via_neighbor,
+                    "dest_fitness": round(cached.optima[edge.target].fitness, 4),
+                    "progress": f"{edge.source + 1}/{n_optima}",
+                },
+            )
 
-        # Stream edges one by one (replay from result)
-        for i, edge in enumerate(result.edges):
-            await ws.send_json({
-                "type": "computing_orc",
-                "optimum_idx": edge.source,
-                "progress": f"{i + 1}/{n_optima}",
-            })
-            await ws.send_json({
-                "type": "edge_added",
-                "source": edge.source,
-                "target": edge.target,
-                "min_kappa": round(edge.min_kappa, 4),
-                "via_neighbor": edge.via_neighbor,
-                "dest_fitness": round(cached.optima[edge.target].fitness, 4),
-                "progress": f"{i + 1}/{n_optima}",
-            })
+        _DONE = object()
 
-        # Send funnel events
+        async def run_build():
+            result = await asyncio.to_thread(
+                build_otg, cached.space, cached.optima,
+                gamma=gamma, on_edge=on_edge, on_computing=on_computing,
+            )
+            loop.call_soon_threadsafe(queue.put_nowait, ("result", result))
+
+        build_task = asyncio.create_task(run_build())
+
+        result = None
+        while True:
+            item = await queue.get()
+            if isinstance(item, tuple) and item[0] == "result":
+                result = item[1]
+                break
+            await ws.send_json(item)
+
+        await build_task
+
         for funnel in result.funnels:
             await ws.send_json({
                 "type": "funnel_formed",
@@ -124,7 +128,6 @@ async def stream_otg(ws: WebSocket):
                 "is_cycle": funnel.is_cycle,
             })
 
-        # Send completion
         await ws.send_json({
             "type": "complete",
             "num_funnels": len(result.funnels),

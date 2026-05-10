@@ -54,11 +54,50 @@ class OTGResult:
     has_cycles: bool
 
 
+def _resolve_edge(
+    i: int,
+    optima: list[LocalOptimum],
+    all_orc: dict[int, float],
+    space: SearchSpace,
+    opt_idx_map: dict[int, int],
+) -> OTGEdge:
+    """Resolve the OTG escape edge for optimum at list index i."""
+    ranked = sorted(all_orc, key=all_orc.get)
+
+    escape_nbr = ranked[0]
+    escape_kappa = all_orc[escape_nbr]
+    dest_idx = i
+
+    for candidate in ranked:
+        dest_solution = hill_climb(space, candidate)
+        if dest_solution in opt_idx_map:
+            cand_idx = opt_idx_map[dest_solution]
+        else:
+            cand_idx = i
+
+        if cand_idx != i:
+            escape_nbr = candidate
+            escape_kappa = all_orc[candidate]
+            dest_idx = cand_idx
+            break
+    else:
+        dest_solution = hill_climb(space, ranked[0])
+        dest_idx = opt_idx_map.get(dest_solution, i)
+
+    return OTGEdge(
+        source=i,
+        target=dest_idx,
+        min_kappa=escape_kappa,
+        via_neighbor=escape_nbr,
+    )
+
+
 def build_otg(
     space: SearchSpace,
     optima: list[LocalOptimum],
     gamma: float = 1.0,
     on_edge: callable = None,
+    on_computing: callable = None,
 ) -> OTGResult:
     """Build the ORC Transition Graph over the given local optima.
 
@@ -66,73 +105,49 @@ def build_otg(
         space: the search space instance
         optima: list of local optima (from hill_climb.enumerate_local_optima)
         gamma: ORC sensitivity parameter
-        on_edge: optional callback(edge: OTGEdge) for streaming progress
+        on_edge: optional callback(edge: OTGEdge) called after each edge is resolved
+        on_computing: optional callback(i: int) called before ORC computation for optimum i
 
     Returns:
         OTGResult with edges, funnels, and structural metrics.
     """
-    # Map solution-space index to optima-list index
     opt_idx_map = {o.idx: i for i, o in enumerate(optima)}
     n = len(optima)
 
     edges: list[OTGEdge] = []
     orc_values: dict[int, dict[int, float]] = {}
-    # successor[i] = j means optimum i points to optimum j in the OTG
     successor = np.full(n, -1, dtype=np.intp)
 
-    # Phase 1: compute ORC values for all optima (parallelizable).
-    # ThreadPoolExecutor works because scipy.optimize.linear_sum_assignment
-    # releases the GIL, giving true parallelism on the C-level hot path.
-    n_workers = min(os.cpu_count() or 4, n, 8)
-    if on_edge is None and n_workers > 1 and n > 4:
-        with ThreadPoolExecutor(max_workers=n_workers) as pool:
-            futures = {
-                pool.submit(compute_all_orc, space, opt.idx, gamma): i
-                for i, opt in enumerate(optima)
-            }
-            for future in as_completed(futures):
-                orc_values[futures[future]] = future.result()
-    else:
+    if on_edge is not None:
+        # Streaming mode: interleave ORC computation + edge resolution per optimum
+        # so the caller receives incremental progress.
         for i, opt in enumerate(optima):
+            if on_computing is not None:
+                on_computing(i)
             orc_values[i] = compute_all_orc(space, opt.idx, gamma)
-
-    # Phase 2: resolve edges (sequential, needs hill climbing + opt_idx_map).
-    for i, opt in enumerate(optima):
-        all_orc = orc_values[i]
-        ranked = sorted(all_orc, key=all_orc.get)
-
-        escape_nbr = ranked[0]
-        escape_kappa = all_orc[escape_nbr]
-        dest_idx = i
-
-        for candidate in ranked:
-            dest_solution = hill_climb(space, candidate)
-            if dest_solution in opt_idx_map:
-                cand_idx = opt_idx_map[dest_solution]
-            else:
-                cand_idx = i
-
-            if cand_idx != i:
-                escape_nbr = candidate
-                escape_kappa = all_orc[candidate]
-                dest_idx = cand_idx
-                break
-        else:
-            dest_solution = hill_climb(space, ranked[0])
-            dest_idx = opt_idx_map.get(dest_solution, i)
-
-        successor[i] = dest_idx
-
-        edge = OTGEdge(
-            source=i,
-            target=dest_idx,
-            min_kappa=escape_kappa,
-            via_neighbor=escape_nbr,
-        )
-        edges.append(edge)
-
-        if on_edge is not None:
+            edge = _resolve_edge(i, optima, orc_values[i], space, opt_idx_map)
+            successor[i] = edge.target
+            edges.append(edge)
             on_edge(edge)
+    else:
+        # Batch mode: parallel Phase 1, then sequential Phase 2.
+        n_workers = min(os.cpu_count() or 4, n, 8)
+        if n_workers > 1 and n > 4:
+            with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                futures = {
+                    pool.submit(compute_all_orc, space, opt.idx, gamma): i
+                    for i, opt in enumerate(optima)
+                }
+                for future in as_completed(futures):
+                    orc_values[futures[future]] = future.result()
+        else:
+            for i, opt in enumerate(optima):
+                orc_values[i] = compute_all_orc(space, opt.idx, gamma)
+
+        for i, opt in enumerate(optima):
+            edge = _resolve_edge(i, optima, orc_values[i], space, opt_idx_map)
+            successor[i] = edge.target
+            edges.append(edge)
 
     # Detect funnels: follow successor chains until we hit a cycle
     funnels = _detect_funnels(successor, optima)
