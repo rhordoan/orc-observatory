@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -61,6 +61,12 @@ export function DetailPanel({
           <Row label="Fitness" value={optimum.fitness.toFixed(4)} mono />
           <Row label="Basin size" value={optimum.basin_size} mono />
           <Row label="Rank" value={`#${nodeIdx + 1} / ${instance.n_optima}`} />
+          {instance.problem_type === "tsp" && instance.city_coords && (
+            <TourMiniMap
+              coords={instance.city_coords}
+              tourLabel={optimum.label}
+            />
+          )}
         </section>
 
         <Separator />
@@ -138,24 +144,24 @@ export function DetailPanel({
               </p>
             </div>
 
-            <div className="text-xs font-mono space-y-0.5">
+            <div className="text-[11px] font-mono space-y-0.5 overflow-x-auto">
               <p className="text-muted-foreground font-sans text-[11px] mb-1">
                 Optimal matching
               </p>
               {explain.matching.map(([i, j], idx) => (
                 <div
                   key={idx}
-                  className="flex items-center gap-2"
+                  className="flex items-center gap-1 min-w-0"
                 >
-                  <span className="w-10 text-right">{explain.x_exclusive_labels[i]}</span>
-                  <div className="flex-1 flex items-center">
+                  <span className="shrink-0 text-right">{explain.x_exclusive_labels[i]}</span>
+                  <div className="flex items-center min-w-[40px]">
                     <div className="h-px bg-border flex-1" />
-                    <span className="text-[10px] text-muted-foreground px-1 bg-card">
+                    <span className="text-[11px] text-muted-foreground px-0.5 bg-card whitespace-nowrap">
                       {explain.pair_costs[idx].toFixed(2)}
                     </span>
                     <div className="h-px bg-border flex-1" />
                   </div>
-                  <span className="w-10">{explain.y_exclusive_labels[j]}</span>
+                  <span className="shrink-0">{explain.y_exclusive_labels[j]}</span>
                 </div>
               ))}
             </div>
@@ -197,16 +203,93 @@ function Row({
   mono?: boolean;
   highlight?: boolean;
 }) {
+  const isLong = typeof value === "string" && value.length > 12;
   return (
-    <div className="flex justify-between text-xs">
-      <span className="text-muted-foreground">{label}</span>
+    <div className="flex justify-between text-xs gap-2">
+      <span className="text-muted-foreground shrink-0">{label}</span>
       <span
-        className={`${mono ? "font-mono tabular-nums" : ""} ${
+        className={`text-right truncate ${mono ? "font-mono tabular-nums" : ""} ${
           highlight ? "text-primary font-medium" : ""
-        }`}
+        } ${isLong ? "text-[10px]" : ""}`}
       >
         {value}
       </span>
     </div>
+  );
+}
+
+function TourMiniMap({
+  coords,
+  tourLabel,
+}: {
+  coords: number[][];
+  tourLabel: string;
+}) {
+  const ref = useRef<HTMLCanvasElement>(null);
+
+  const draw = useCallback(() => {
+    const cvs = ref.current;
+    if (!cvs) return;
+    const ctx = cvs.getContext("2d");
+    if (!ctx) return;
+
+    const S = cvs.width;
+    const pad = 14;
+    const inner = S - 2 * pad;
+    ctx.clearRect(0, 0, S, S);
+
+    const tour = tourLabel.split("\u2192").map(Number);
+    if (tour.some(isNaN) || tour.length < 3) return;
+
+    const fg = getComputedStyle(cvs).getPropertyValue("--foreground").trim();
+    const primary = getComputedStyle(cvs).getPropertyValue("--primary").trim();
+    const fgColor = fg.startsWith("hsl") || fg.startsWith("#") ? fg : `hsl(${fg})`;
+    const priColor = primary.startsWith("hsl") || primary.startsWith("#") ? primary : `hsl(${primary})`;
+
+    const px = (x: number) => pad + x * inner;
+    const py = (y: number) => pad + (1 - y) * inner;
+
+    ctx.strokeStyle = priColor;
+    ctx.lineWidth = 1.5;
+    ctx.globalAlpha = 0.6;
+    ctx.beginPath();
+    for (let i = 0; i <= tour.length; i++) {
+      const c = coords[tour[i % tour.length]];
+      if (i === 0) ctx.moveTo(px(c[0]), py(c[1]));
+      else ctx.lineTo(px(c[0]), py(c[1]));
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    for (let ci = 0; ci < coords.length; ci++) {
+      const [cx, cy] = coords[ci];
+      const inTour = tour.includes(ci);
+      ctx.fillStyle = inTour ? priColor : fgColor;
+      ctx.globalAlpha = inTour ? 1 : 0.25;
+      ctx.beginPath();
+      ctx.arc(px(cx), py(cy), inTour ? 4 : 2.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      if (inTour) {
+        ctx.fillStyle = fgColor;
+        ctx.globalAlpha = 0.7;
+        ctx.font = "bold 8px system-ui";
+        ctx.textAlign = "center";
+        ctx.fillText(String(ci), px(cx), py(cy) - 6);
+      }
+    }
+    ctx.globalAlpha = 1;
+  }, [coords, tourLabel]);
+
+  useEffect(() => { draw(); }, [draw]);
+
+  return (
+    <canvas
+      ref={ref}
+      width={160}
+      height={160}
+      className="w-full rounded-md border border-border bg-background"
+      style={{ imageRendering: "auto" }}
+    />
   );
 }

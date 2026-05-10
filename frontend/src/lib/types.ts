@@ -14,6 +14,7 @@ export interface InstanceData {
   degree: number;
   n_optima: number;
   optima: OptimumInfo[];
+  city_coords?: number[][] | null;
 }
 
 export interface OTGEdge {

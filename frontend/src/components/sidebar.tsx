@@ -52,11 +52,18 @@ export function Sidebar({
   const [gamma, setGamma] = useState(2);
   const [hasGenerated, setHasGenerated] = useState(false);
 
-  const nMax = useGpu ? 20 : 14;
+  const isPerm = problemType === "tsp" || problemType === "qap";
+  const nMin = problemType === "tsp" ? 5 : 4;
+  const nMax = isPerm
+    ? problemType === "tsp"
+      ? useGpu ? 10 : 9
+      : useGpu ? 9 : 8
+    : useGpu ? 20 : 14;
 
   const handleGenerate = useCallback(async () => {
     setIsLoading(true);
     setHasGenerated(true);
+    const parsedSeed = parseInt(seed, 10);
     try {
       const inst = await createInstance({
         problem_type: problemType,
@@ -65,7 +72,7 @@ export function Sidebar({
         mu,
         nu,
         gamma_wmodel: gamma,
-        seed: seed ? parseInt(seed) : null,
+        seed: Number.isFinite(parsedSeed) ? parsedSeed : null,
         use_gpu: useGpu,
       });
       onInstanceCreated(inst);
@@ -142,10 +149,16 @@ export function Sidebar({
         }
       },
       () => {
-        buildOTG(instance.instance_id).then((fullOtg) => {
-          onOtgBuilt(fullOtg);
-          setIsLoading(false);
-        });
+        buildOTG(instance.instance_id)
+          .then((fullOtg) => {
+            onOtgBuilt(fullOtg);
+          })
+          .catch((err) => {
+            console.error("Post-animate OTG build failed:", err);
+          })
+          .finally(() => {
+            setIsLoading(false);
+          });
       }
     );
   }
@@ -197,11 +210,19 @@ export function Sidebar({
         {/* ---- Problem configuration ---- */}
         <section>
           <Label>Problem type</Label>
-          <div className="flex gap-1.5 mt-1.5">
-            {(["nk", "wmodel", "maxsat"] as const).map((t) => (
+          <div className="flex flex-wrap gap-1.5 mt-1.5">
+            {(["nk", "wmodel", "maxsat", "tsp", "qap"] as const).map((t) => (
               <button
                 key={t}
-                onClick={() => setProblemType(t)}
+                onClick={() => {
+                  setProblemType(t);
+                  const min = t === "tsp" ? 5 : 4;
+                  if (n < min) setN(min);
+                  const max = (t === "tsp" || t === "qap")
+                    ? t === "tsp" ? (useGpu ? 10 : 9) : (useGpu ? 9 : 8)
+                    : (useGpu ? 20 : 14);
+                  if (n > max) setN(max);
+                }}
                 className={`
                   px-2.5 py-1 text-xs rounded-md border transition-colors duration-150
                   ${
@@ -211,7 +232,7 @@ export function Sidebar({
                   }
                 `}
               >
-                {t === "nk" ? "NK" : t === "wmodel" ? "W-model" : "MAX-SAT"}
+                {{ nk: "NK", wmodel: "W-model", maxsat: "MAX-SAT", tsp: "TSP", qap: "QAP" }[t]}
               </button>
             ))}
           </div>
@@ -219,12 +240,13 @@ export function Sidebar({
 
         <section>
           <Label>
-            N (problem size) <span className="text-muted-foreground">{n}</span>
+            {isPerm ? (problemType === "tsp" ? "Cities" : "Facilities") : "N (problem size)"}{" "}
+            <span className="text-muted-foreground">{n}</span>
           </Label>
           <Slider
             value={[n]}
             onValueChange={(v) => setN(Array.isArray(v) ? v[0] : v)}
-            min={4}
+            min={nMin}
             max={nMax}
             step={1}
             className="mt-2"
@@ -341,7 +363,14 @@ export function Sidebar({
                 {instance.instance_id}
               </Badge>
             </div>
-            <Row label="Space" value={`2^${Math.log2(instance.space_size)}`} />
+            <Row
+              label="Space"
+              value={
+                Number.isInteger(Math.log2(instance.space_size))
+                  ? `2^${Math.log2(instance.space_size)}`
+                  : instance.space_size.toLocaleString()
+              }
+            />
             <Row label="Degree" value={instance.degree} />
             <Row label="Local optima" value={instance.n_optima} />
           </Card>

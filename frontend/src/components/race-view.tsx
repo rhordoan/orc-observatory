@@ -82,8 +82,11 @@ export function RaceView({
   const [dR, setDR] = useState(2);
   const [paceMs, setPaceMs] = useState(50);
 
-  const predicted = otg.has_cycles ? "orc" : "random";
-  const predictionCorrect = winner ? winner === predicted : null;
+  const predictionCorrect = winner
+    ? otg.has_cycles
+      ? winner === "orc"
+      : winner !== "orc"
+    : null;
   const hasRun = results !== null;
 
   const latestByAlgo = useMemo(() => {
@@ -241,14 +244,15 @@ export function RaceView({
               </Button>
             ) : (
               <Button
-                onClick={() =>
+                onClick={() => {
+                  const parsed = parseInt(seed, 10);
                   onStartRace(
                     budget,
                     dR,
-                    seed ? parseInt(seed) : null,
+                    Number.isFinite(parsed) ? parsed : null,
                     paceMs
-                  )
-                }
+                  );
+                }}
               >
                 {hasRun ? "Re-run" : "Run Race"}
               </Button>
@@ -273,7 +277,7 @@ export function RaceView({
               const latest = latestByAlgo[key];
               const result = results?.find((r) => r.algo === key);
               const isWinner = winner === key;
-              const isPredicted = predicted === key;
+              const isPredicted = otg.has_cycles ? key === "orc" : key !== "orc";
 
               return (
                 <Card
@@ -389,8 +393,8 @@ export function RaceView({
                       fontSize: 11,
                     }}
                     labelStyle={{ color: "oklch(0.58 0.01 75)" }}
-                    formatter={(value: number, name: string) => [
-                      value.toFixed(4),
+                    formatter={(value: unknown, name: string) => [
+                      typeof value === "number" ? value.toFixed(4) : String(value ?? ""),
                       ALGO_META[name]?.label ?? name,
                     ]}
                     labelFormatter={(v) => `${v} evals`}
@@ -419,7 +423,7 @@ export function RaceView({
               <div className="h-full flex items-center justify-center">
                 <div className="text-center space-y-2">
                   <div className="text-muted-foreground/40 text-4xl">
-                    \u25B6
+                    {"\u25B6"}
                   </div>
                   <p className="text-sm text-muted-foreground">
                     Press <span className="font-medium text-foreground">Run Race</span> to start comparing algorithms
