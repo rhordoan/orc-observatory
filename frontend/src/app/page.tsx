@@ -1,12 +1,19 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect, lazy, Suspense } from "react";
 import { Sidebar } from "@/components/sidebar";
-import { GraphCanvas } from "@/components/graph-canvas";
-import { DetailPanel } from "@/components/detail-panel";
 import { MetricsBar } from "@/components/metrics-bar";
-import { RacePanel } from "@/components/race-panel";
-import { streamILS } from "@/lib/api";
+import { streamILS, fetchGpuStatus } from "@/lib/api";
+
+const GraphCanvas = lazy(() =>
+  import("@/components/graph-canvas").then((m) => ({ default: m.GraphCanvas }))
+);
+const DetailPanel = lazy(() =>
+  import("@/components/detail-panel").then((m) => ({ default: m.DetailPanel }))
+);
+const RaceView = lazy(() =>
+  import("@/components/race-view").then((m) => ({ default: m.RaceView }))
+);
 import type {
   InstanceData,
   OTGData,
@@ -16,12 +23,27 @@ import type {
   ILSResult,
 } from "@/lib/types";
 
+type Tab = "otg" | "race";
+
 export default function Home() {
   const [instance, setInstance] = useState<InstanceData | null>(null);
   const [otg, setOtg] = useState<OTGData | null>(null);
   const [lon, setLon] = useState<LONData | null>(null);
   const [selectedNode, setSelectedNode] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [seed, setSeed] = useState("42");
+  const [activeTab, setActiveTab] = useState<Tab>("otg");
+
+  /* GPU state */
+  const [gpuAvailable, setGpuAvailable] = useState(false);
+  const [useGpu, setUseGpu] = useState(false);
+
+  useEffect(() => {
+    fetchGpuStatus().then((avail) => {
+      setGpuAvailable(avail);
+      if (avail) setUseGpu(true);
+    });
+  }, []);
 
   /* F2: race state */
   const [metrics, setMetrics] = useState<MetricsData | null>(null);
@@ -31,6 +53,39 @@ export default function Home() {
   const [raceWinner, setRaceWinner] = useState<string | null>(null);
   const [trajectories, setTrajectories] = useState<Record<string, number[]> | null>(null);
   const cancelRef = useRef<(() => void) | null>(null);
+  const eventBufferRef = useRef<ILSIterationEvent[]>([]);
+  const flushTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const FLUSH_INTERVAL_MS = 100;
+
+  const flushEvents = useCallback(() => {
+    if (eventBufferRef.current.length === 0) return;
+    const batch = eventBufferRef.current;
+    eventBufferRef.current = [];
+    setRaceEvents((prev) => {
+      const merged = new Array(prev.length + batch.length);
+      for (let i = 0; i < prev.length; i++) merged[i] = prev[i];
+      for (let i = 0; i < batch.length; i++) merged[prev.length + i] = batch[i];
+      return merged;
+    });
+  }, []);
+
+  const startFlushing = useCallback(() => {
+    if (flushTimerRef.current) return;
+    flushTimerRef.current = setInterval(flushEvents, FLUSH_INTERVAL_MS);
+  }, [flushEvents]);
+
+  const stopFlushing = useCallback(() => {
+    if (flushTimerRef.current) {
+      clearInterval(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+    flushEvents();
+  }, [flushEvents]);
+
+  useEffect(() => () => {
+    if (flushTimerRef.current) clearInterval(flushTimerRef.current);
+  }, []);
 
   const handleInstanceCreated = useCallback((inst: InstanceData) => {
     setSelectedNode(null);
@@ -41,11 +96,12 @@ export default function Home() {
     setRaceResults(null);
     setRaceWinner(null);
     setTrajectories(null);
+    eventBufferRef.current = [];
     setInstance(inst);
   }, []);
 
   const handleStartRace = useCallback(
-    (budget: number, d_r: number, seed: number | null, paceMs: number) => {
+    (budget: number, d_r: number, raceSeed: number | null, paceMs: number) => {
       if (!instance) return;
 
       setIsRacing(true);
@@ -53,17 +109,21 @@ export default function Home() {
       setRaceResults(null);
       setRaceWinner(null);
       setTrajectories(null);
+      eventBufferRef.current = [];
+
+      startFlushing();
 
       const cancel = streamILS(
         instance.instance_id,
         budget,
         d_r,
-        seed,
+        raceSeed,
         paceMs,
         (event) => {
-          setRaceEvents((prev) => [...prev, event]);
+          eventBufferRef.current.push(event);
         },
         (winner, results) => {
+          stopFlushing();
           setRaceResults(results);
           setRaceWinner(winner);
           setIsRacing(false);
@@ -79,16 +139,45 @@ export default function Home() {
 
       cancelRef.current = cancel;
     },
-    [instance]
+    [instance, startFlushing, stopFlushing]
   );
 
   const handleCancelRace = useCallback(() => {
     cancelRef.current?.();
     cancelRef.current = null;
+    stopFlushing();
     setIsRacing(false);
-  }, []);
+  }, [stopFlushing]);
 
-  const showRacePanel = isRacing || raceResults !== null;
+  const handleExportCSV = useCallback(() => {
+    if (!raceEvents.length) return;
+
+    const header = "algo,evals,best_fitness\n";
+    const rows = raceEvents
+      .map((e) => `${e.algo},${e.evals},${e.best_fitness}`)
+      .join("\n");
+
+    let csv = header + rows;
+
+    if (metrics) {
+      csv +=
+        "\n\nmetric,value\n" +
+        `fdc,${metrics.fdc}\n` +
+        `autocorrelation_length,${metrics.autocorrelation_length}\n` +
+        `information_content,${metrics.information_content}\n` +
+        `mean_orc,${metrics.mean_orc}`;
+    }
+
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `orc_race_${instance?.instance_id ?? "export"}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [raceEvents, metrics, instance]);
+
+  const canRace = instance !== null && otg !== null;
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -100,51 +189,114 @@ export default function Home() {
         onLonBuilt={setLon}
         isLoading={isLoading}
         setIsLoading={setIsLoading}
-        metrics={metrics}
         onMetrics={setMetrics}
-        isRacing={isRacing}
-        raceResults={raceResults}
-        raceEvents={raceEvents}
-        onStartRace={handleStartRace}
-        onCancelRace={handleCancelRace}
+        seed={seed}
+        onSeedChange={setSeed}
+        gpuAvailable={gpuAvailable}
+        useGpu={useGpu}
+        onToggleGpu={() => setUseGpu((v) => !v)}
       />
 
       <div className="flex-1 flex flex-col min-w-0">
-        {otg && <MetricsBar otg={otg} lon={lon} />}
-
-        <div className={`flex min-h-0 ${showRacePanel ? "h-1/2" : "flex-1"}`}>
-          <GraphCanvas
-            instance={instance}
-            otg={otg}
-            lon={lon}
-            selectedNode={selectedNode}
-            onNodeSelect={setSelectedNode}
-            trajectories={trajectories}
-          />
-
-          {selectedNode !== null && instance && otg &&
-            selectedNode < instance.optima.length && (
-            <DetailPanel
-              instance={instance}
-              otg={otg}
-              nodeIdx={selectedNode}
-              onClose={() => setSelectedNode(null)}
-            />
-          )}
-        </div>
-
-        {showRacePanel && otg && (
-          <div className="h-1/2 min-h-0">
-            <RacePanel
-              hasCycles={otg.has_cycles}
-              events={raceEvents}
-              results={raceResults}
-              winner={raceWinner}
-              isRacing={isRacing}
-            />
+        {/* Tab bar */}
+        {otg && (
+          <div className="h-10 border-b border-border flex items-center px-4 gap-1 shrink-0 bg-card">
+            <TabButton
+              active={activeTab === "otg"}
+              onClick={() => setActiveTab("otg")}
+            >
+              OTG Explorer
+            </TabButton>
+            <TabButton
+              active={activeTab === "race"}
+              onClick={() => setActiveTab("race")}
+              disabled={!canRace}
+            >
+              Algorithm Race
+              {isRacing && (
+                <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse ml-1.5" />
+              )}
+            </TabButton>
           </div>
         )}
+
+        {/* Tab content */}
+        <Suspense fallback={<div className="flex-1" />}>
+          {activeTab === "otg" ? (
+            <div className="flex-1 flex flex-col min-h-0">
+              {otg && <MetricsBar otg={otg} lon={lon} />}
+
+              <div className="flex flex-1 min-h-0">
+                <GraphCanvas
+                  instance={instance}
+                  otg={otg}
+                  lon={lon}
+                  selectedNode={selectedNode}
+                  onNodeSelect={setSelectedNode}
+                  trajectories={trajectories}
+                />
+
+                {selectedNode !== null && instance && otg &&
+                  selectedNode < instance.optima.length && (
+                  <DetailPanel
+                    instance={instance}
+                    otg={otg}
+                    nodeIdx={selectedNode}
+                    onClose={() => setSelectedNode(null)}
+                  />
+                )}
+              </div>
+            </div>
+          ) : (
+            canRace && (
+              <RaceView
+                instance={instance}
+                otg={otg}
+                metrics={metrics}
+                events={raceEvents}
+                results={raceResults}
+                winner={raceWinner}
+                isRacing={isRacing}
+                onStartRace={handleStartRace}
+                onCancelRace={handleCancelRace}
+                onExportCSV={handleExportCSV}
+                seed={seed}
+              />
+            )
+          )}
+        </Suspense>
       </div>
     </div>
+  );
+}
+
+function TabButton({
+  active,
+  disabled,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`
+        flex items-center gap-1 px-3 py-1.5 text-xs rounded-md transition-colors
+        ${
+          active
+            ? "bg-primary/10 text-primary font-medium"
+            : disabled
+              ? "text-muted-foreground/40 cursor-not-allowed"
+              : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+        }
+      `}
+    >
+      {children}
+    </button>
   );
 }

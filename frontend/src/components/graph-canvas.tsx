@@ -95,7 +95,6 @@ export function GraphCanvas({
 
     const attractorSet = new Set(funnels.map((f) => f.attractor_idx));
 
-    // Shared nodes array for both graphs
     const nodes: NodeDatum[] = optima.map((o) => ({
       idx: o.list_idx,
       fitness: o.fitness,
@@ -104,10 +103,12 @@ export function GraphCanvas({
       isAttractor: attractorSet.has(o.list_idx),
     }));
 
+    const nodeByIdx = new Map(nodes.map((n) => [n.idx, n]));
+
     const activeOtgEdges = otg.edges
       .map((e) => ({
-        source: nodes.find((n) => n.idx === e.source),
-        target: nodes.find((n) => n.idx === e.target),
+        source: nodeByIdx.get(e.source),
+        target: nodeByIdx.get(e.target),
         kappa: e.min_kappa,
       }))
       .filter((e): e is { source: NodeDatum; target: NodeDatum; kappa: number } =>
@@ -116,8 +117,8 @@ export function GraphCanvas({
 
     const activeLonEdges = lon ? lon.edges
       .map((e) => ({
-        source: nodes.find((n) => n.idx === e.source),
-        target: nodes.find((n) => n.idx === e.target),
+        source: nodeByIdx.get(e.source),
+        target: nodeByIdx.get(e.target),
         kappa: 0,
       }))
       .filter((e): e is { source: NodeDatum; target: NodeDatum; kappa: number } =>
@@ -127,17 +128,23 @@ export function GraphCanvas({
     // The simulation runs ONLY on the OTG edges so that OTG clusters funnels nicely
     const simLinks = activeOtgEdges.filter((e) => e.source !== e.target);
 
+    const isLarge = nodes.length > 200;
+    const chargeStrength = isLarge ? -80 : -200;
+    const linkDist = isLarge ? 30 : 60;
+
     const simulation = d3
       .forceSimulation(nodes)
       .force(
         "link",
-        d3.forceLink(simLinks).id((d) => (d as NodeDatum).idx).distance(60)
+        d3.forceLink(simLinks).id((d) => (d as NodeDatum).idx).distance(linkDist)
       )
-      .force("charge", d3.forceManyBody().strength(-200))
+      .force("charge", d3.forceManyBody().strength(chargeStrength).theta(isLarge ? 0.9 : 0.8))
       .force("center", d3.forceCenter(width / 2, height / 2))
       .force("collision", d3.forceCollide().radius((d) =>
         nodeRadius((d as NodeDatum).basinSize) + 2
       ));
+
+    if (isLarge) simulation.alphaDecay(0.05);
 
     function createGraph(svgNode: any, edges: typeof activeOtgEdges, isOtg: boolean) {
       const svg = d3.select(svgNode)
@@ -145,7 +152,8 @@ export function GraphCanvas({
         .attr("height", height)
         .style("border-right", isOtg && viewMode === "side-by-side" ? "1px solid var(--border)" : "none");
 
-      const g = svg.append("g").attr("class", "graph-container");
+      const g = svg.append("g").attr("class", "graph-container")
+        .style("will-change", "transform");
 
       const zoom = d3.zoom<SVGSVGElement, unknown>()
         .scaleExtent([0.1, 8])
@@ -241,9 +249,11 @@ export function GraphCanvas({
         });
       }
 
+      const showLabels = nodes.length <= 150;
+      const labelData = showLabels ? nodes : nodes.filter((n) => n.isAttractor);
       const labelSel = g.append("g").attr("class", "labels")
         .selectAll("text")
-        .data(nodes)
+        .data(labelData)
         .join("text")
         .text((d) => d.fitness.toFixed(2))
         .attr("font-size", "9px")
@@ -277,29 +287,40 @@ export function GraphCanvas({
       graphs.push(createGraph(svg, activeLonEdges, false));
     }
 
+    const radiusCache = new Map<number, number>();
+    for (const n of nodes) {
+      radiusCache.set(n.idx, nodeRadius(n.basinSize));
+    }
+
     simulation.on("tick", () => {
       graphs.forEach(({ linkSel, nodeSel, labelSel, trajGroup }) => {
-        linkSel
-          .attr("x1", (d: any) => d.source.x ?? 0)
-          .attr("y1", (d: any) => d.source.y ?? 0)
-          .attr("x2", (d: any) => {
-            const dx = (d.target.x ?? 0) - (d.source.x ?? 0);
-            const dy = (d.target.y ?? 0) - (d.source.y ?? 0);
-            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-            const r = nodeRadius(d.target.basinSize);
-            return (d.target.x ?? 0) - (dx / dist) * r;
-          })
-          .attr("y2", (d: any) => {
-            const dx = (d.target.x ?? 0) - (d.source.x ?? 0);
-            const dy = (d.target.y ?? 0) - (d.source.y ?? 0);
-            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-            const r = nodeRadius(d.target.basinSize);
-            return (d.target.y ?? 0) - (dy / dist) * r;
-          });
+        linkSel.each(function (this: SVGLineElement, d: any) {
+          const sx = d.source.x ?? 0;
+          const sy = d.source.y ?? 0;
+          const tx = d.target.x ?? 0;
+          const ty = d.target.y ?? 0;
+          const dx = tx - sx;
+          const dy = ty - sy;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          const r = radiusCache.get(d.target.idx) ?? 6;
+          this.setAttribute("x1", String(sx));
+          this.setAttribute("y1", String(sy));
+          this.setAttribute("x2", String(tx - (dx / dist) * r));
+          this.setAttribute("y2", String(ty - (dy / dist) * r));
+        });
 
-        nodeSel.attr("cx", (d: any) => d.x ?? 0).attr("cy", (d: any) => d.y ?? 0);
-        labelSel.attr("x", (d: any) => d.x ?? 0).attr("y", (d: any) => d.y ?? 0);
-        trajGroup.selectAll("circle").attr("cx", (d: any) => d.x ?? 0).attr("cy", (d: any) => d.y ?? 0);
+        nodeSel.each(function (this: SVGCircleElement, d: any) {
+          this.setAttribute("cx", String(d.x ?? 0));
+          this.setAttribute("cy", String(d.y ?? 0));
+        });
+        labelSel.each(function (this: SVGTextElement, d: any) {
+          this.setAttribute("x", String(d.x ?? 0));
+          this.setAttribute("y", String(d.y ?? 0));
+        });
+        trajGroup.selectAll("circle").each(function (this: SVGCircleElement, d: any) {
+          this.setAttribute("cx", String(d.x ?? 0));
+          this.setAttribute("cy", String(d.y ?? 0));
+        });
       });
     });
 
