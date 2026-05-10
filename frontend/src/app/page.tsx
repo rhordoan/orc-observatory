@@ -14,6 +14,11 @@ const DetailPanel = lazy(() =>
 const RaceView = lazy(() =>
   import("@/components/race-view").then((m) => ({ default: m.RaceView }))
 );
+const LandscapeView3D = lazy(() =>
+  import("@/components/landscape-3d").then((m) => ({
+    default: m.LandscapeView3D,
+  }))
+);
 import type {
   InstanceData,
   OTGData,
@@ -33,6 +38,7 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [seed, setSeed] = useState("42");
   const [activeTab, setActiveTab] = useState<Tab>("otg");
+  const [view3D, setView3D] = useState(false);
 
   /* GPU state */
   const [gpuAvailable, setGpuAvailable] = useState(false);
@@ -221,20 +227,49 @@ export default function Home() {
         )}
 
         {/* Tab content */}
-        <Suspense fallback={<div className="flex-1" />}>
+        <Suspense fallback={
+          <div className="flex-1 flex items-center justify-center">
+            <div className="w-6 h-6 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+          </div>
+        }>
           {activeTab === "otg" ? (
             <div className="flex-1 flex flex-col min-h-0">
               {otg && <MetricsBar otg={otg} lon={lon} />}
 
-              <div className="flex flex-1 min-h-0">
-                <GraphCanvas
-                  instance={instance}
-                  otg={otg}
-                  lon={lon}
-                  selectedNode={selectedNode}
-                  onNodeSelect={setSelectedNode}
-                  trajectories={trajectories}
-                />
+              <div className="flex flex-1 min-h-0 relative">
+
+                {view3D && instance && otg && instance.space_size <= 1024 ? (
+                  <>
+                    <LandscapeView3D
+                      instance={instance}
+                      otg={otg}
+                      selectedNode={selectedNode}
+                      onNodeSelect={setSelectedNode}
+                    />
+                    <button
+                      onClick={() => setView3D(false)}
+                      className="absolute top-3 left-3 z-20 px-3 py-1 text-xs rounded-md border h-8 bg-primary/15 text-primary border-primary/30 font-medium transition-colors hover:bg-primary/25"
+                    >
+                      ← 2D Graph
+                    </button>
+                  </>
+                ) : (
+                  <GraphCanvas
+                    instance={instance}
+                    otg={otg}
+                    lon={lon}
+                    selectedNode={selectedNode}
+                    onNodeSelect={setSelectedNode}
+                    trajectories={trajectories}
+                    view3D={view3D}
+                    onToggle3D={() => setView3D((v) => !v)}
+                    show3DToggle={
+                      !!instance && !!otg &&
+                      !["tsp", "qap"].includes(instance.problem_type) &&
+                      instance.space_size <= 1024
+                    }
+                  />
+                )}
 
                 {selectedNode !== null && instance && otg &&
                   selectedNode < instance.optima.length && (

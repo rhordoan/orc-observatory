@@ -79,21 +79,35 @@ export function streamOTG(
 ) {
   const wsUrl = API.replace(/^http/, "ws");
   const ws = new WebSocket(`${wsUrl}/ws/otg/stream`);
+  let completed = false;
 
   ws.onopen = () => {
     ws.send(JSON.stringify({ instance_id: instanceId, gamma }));
   };
 
   ws.onmessage = (evt) => {
-    const data = JSON.parse(evt.data);
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(evt.data);
+    } catch {
+      return;
+    }
     onMessage(data);
     if (data.type === "complete") {
+      completed = true;
       onComplete();
       ws.close();
     }
   };
 
   ws.onerror = () => ws.close();
+
+  ws.onclose = () => {
+    if (!completed) {
+      completed = true;
+      onComplete();
+    }
+  };
 
   return () => ws.close();
 }
@@ -111,6 +125,7 @@ export function streamILS(
 ): () => void {
   const wsUrl = API.replace(/^http/, "ws");
   const ws = new WebSocket(`${wsUrl}/ws/ils/stream`);
+  let completed = false;
 
   ws.onopen = () => {
     ws.send(
@@ -125,16 +140,32 @@ export function streamILS(
   };
 
   ws.onmessage = (evt) => {
-    const data = JSON.parse(evt.data);
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(evt.data);
+    } catch {
+      return;
+    }
     if (data.type === "iteration") {
-      onEvent(data as ILSIterationEvent);
+      onEvent(data as unknown as ILSIterationEvent);
     } else if (data.type === "complete" || data.type === "cancelled") {
-      onComplete(data.winner ?? "", data.results ?? []);
+      completed = true;
+      onComplete(
+        (data.winner as string) ?? "",
+        (data.results as ILSResult[]) ?? []
+      );
       ws.close();
     }
   };
 
   ws.onerror = () => ws.close();
+
+  ws.onclose = () => {
+    if (!completed) {
+      completed = true;
+      onComplete("", []);
+    }
+  };
 
   return () => {
     try {
@@ -144,6 +175,16 @@ export function streamILS(
     }
     ws.close();
   };
+}
+
+/* ---- 3D landscape: full fitness vector ---- */
+
+export async function fetchFitnessGrid(
+  instanceId: string
+): Promise<{ fitness: number[] }> {
+  const res = await fetch(`${API}/api/instances/${instanceId}/fitness-grid`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
 }
 
 /* ---- F2: Difficulty metrics ---- */
