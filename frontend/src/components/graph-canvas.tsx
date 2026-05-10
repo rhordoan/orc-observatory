@@ -29,6 +29,9 @@ interface GraphCanvasProps {
   selectedNode: number | null;
   onNodeSelect: (idx: number | null) => void;
   trajectories?: Record<string, number[]> | null;
+  view3D?: boolean;
+  onToggle3D?: () => void;
+  show3DToggle?: boolean;
 }
 
 type ViewMode = "otg" | "lon" | "side-by-side";
@@ -56,6 +59,9 @@ export function GraphCanvas({
   selectedNode,
   onNodeSelect,
   trajectories,
+  view3D,
+  onToggle3D,
+  show3DToggle,
 }: GraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
@@ -65,6 +71,14 @@ export function GraphCanvas({
   const onNodeSelectRef = useRef(onNodeSelect);
   const hoveredRef = useRef<NodeDatum | null>(null);
   const dragNodeRef = useRef<NodeDatum | null>(null);
+
+  const pathAnimRef = useRef<{
+    pathIndices: number[];
+    progress: number;
+    active: boolean;
+    rafId: number;
+  } | null>(null);
+  const redrawRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     selectedNodeRef.current = selectedNode;
@@ -138,11 +152,14 @@ export function GraphCanvas({
           const src = nodeByIdx.get(e.source);
           const tgt = nodeByIdx.get(e.target);
           if (!src || !tgt || src === tgt) return null;
+          const color = isOtg
+            ? FUNNEL_COLORS[src.funnelIdx % FUNNEL_COLORS.length]
+            : mutedColor;
           return {
             source: src,
             target: tgt,
             kappa: e.min_kappa,
-            color: isOtg ? kappaColor(e.min_kappa) : mutedColor,
+            color,
           };
         })
         .filter((e): e is EdgeDatum => e !== null);
@@ -318,6 +335,76 @@ export function GraphCanvas({
       }
       ctx.globalAlpha = 1;
 
+      // OTG path animation overlay
+      const anim = pathAnimRef.current;
+      if (anim?.active && anim.pathIndices.length >= 2 && isOtg) {
+        const pNodes = anim.pathIndices.map((i) => nodeByIdx.get(i)).filter(Boolean) as NodeDatum[];
+        if (pNodes.length >= 2) {
+          const maxEdge = pNodes.length - 1;
+          const progress = anim.progress % maxEdge;
+          const edgeI = Math.min(Math.floor(progress), maxEdge - 1);
+          const tFrac = progress - edgeI;
+
+          // Highlighted path edges
+          ctx.globalAlpha = 0.3;
+          ctx.strokeStyle = primaryColor;
+          ctx.lineWidth = 3;
+          for (let i = 0; i < maxEdge; i++) {
+            ctx.beginPath();
+            ctx.moveTo(pNodes[i].x ?? 0, pNodes[i].y ?? 0);
+            ctx.lineTo(pNodes[i + 1].x ?? 0, pNodes[i + 1].y ?? 0);
+            ctx.stroke();
+          }
+
+          // Attractor pulsing ring
+          const att = pNodes[pNodes.length - 1];
+          const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 300);
+          ctx.globalAlpha = 0.25 + 0.2 * pulse;
+          ctx.strokeStyle = primaryColor;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(att.x ?? 0, att.y ?? 0, att.radius + 6 + 3 * pulse, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // Trail
+          const TRAIL = 8;
+          const SPAN = 0.4;
+          for (let ti = TRAIL; ti > 0; ti--) {
+            const tp = progress - (ti * SPAN) / TRAIL;
+            if (tp < 0) continue;
+            const tei = Math.min(Math.floor(tp), maxEdge - 1);
+            const tt = tp - tei;
+            const tsx = (pNodes[tei].x ?? 0) + tt * ((pNodes[tei + 1].x ?? 0) - (pNodes[tei].x ?? 0));
+            const tsy = (pNodes[tei].y ?? 0) + tt * ((pNodes[tei + 1].y ?? 0) - (pNodes[tei].y ?? 0));
+            ctx.globalAlpha = 0.18 * (1 - ti / TRAIL);
+            ctx.fillStyle = primaryColor;
+            ctx.beginPath();
+            ctx.arc(tsx, tsy, 4 - ti * 0.3, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          // Glowing pulse particle
+          const src = pNodes[edgeI];
+          const dst = pNodes[edgeI + 1];
+          const px = (src.x ?? 0) + tFrac * ((dst.x ?? 0) - (src.x ?? 0));
+          const py = (src.y ?? 0) + tFrac * ((dst.y ?? 0) - (src.y ?? 0));
+          ctx.globalAlpha = 1;
+          ctx.save();
+          ctx.shadowColor = primaryColor;
+          ctx.shadowBlur = 14;
+          ctx.fillStyle = primaryColor;
+          ctx.beginPath();
+          ctx.arc(px, py, 5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+          ctx.fillStyle = "#fff";
+          ctx.beginPath();
+          ctx.arc(px, py, 2, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        }
+      }
+
       ctx.restore();
 
       ctx.fillStyle = mutedColor;
@@ -331,10 +418,12 @@ export function GraphCanvas({
       cancelAnimationFrame(animFrame);
       animFrame = requestAnimationFrame(() => views.forEach(drawView));
     }
+    redrawRef.current = scheduleRedraw;
 
     simulation.on("tick", scheduleRedraw);
 
     // Zoom
+    const zooms: d3.ZoomBehavior<HTMLCanvasElement, unknown>[] = [];
     views.forEach((view) => {
       const zoom = d3.zoom<HTMLCanvasElement, unknown>()
         .scaleExtent([0.1, 8])
@@ -343,6 +432,38 @@ export function GraphCanvas({
           scheduleRedraw();
         });
       d3.select(view.canvas).call(zoom);
+      zooms.push(zoom);
+    });
+
+    let fitted = false;
+    simulation.on("end.fit", () => {
+      if (fitted) return;
+      fitted = true;
+
+      let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
+      for (const n of nodes) {
+        const r = n.radius;
+        xMin = Math.min(xMin, (n.x ?? 0) - r);
+        xMax = Math.max(xMax, (n.x ?? 0) + r);
+        yMin = Math.min(yMin, (n.y ?? 0) - r);
+        yMax = Math.max(yMax, (n.y ?? 0) + r);
+      }
+
+      const pad = 40;
+      const bw = (xMax - xMin) + pad * 2;
+      const bh = (yMax - yMin) + pad * 2;
+      const cx = (xMin + xMax) / 2;
+      const cy = (yMin + yMax) / 2;
+
+      views.forEach((view, vi) => {
+        const k = Math.min(view.width / bw, height / bh, 1.5);
+        const tx = -cx * k;
+        const ty = -cy * k;
+        const t = d3.zoomIdentity.translate(tx, ty).scale(k);
+        view.transform = t;
+        d3.select(view.canvas).call(zooms[vi].transform, t);
+      });
+      scheduleRedraw();
     });
 
     // Hit testing
@@ -460,26 +581,97 @@ export function GraphCanvas({
     };
   }, [instance, otg, lon, viewMode, trajectories]);
 
+  // Path-to-attractor animation lifecycle
+  useEffect(() => {
+    if (selectedNode === null || !otg || !instance) {
+      if (pathAnimRef.current) {
+        cancelAnimationFrame(pathAnimRef.current.rafId);
+        pathAnimRef.current = null;
+        redrawRef.current?.();
+      }
+      return;
+    }
+
+    const successor = new Map<number, number>();
+    for (const e of otg.edges) {
+      if (e.source !== e.target) successor.set(e.source, e.target);
+    }
+
+    const path: number[] = [selectedNode];
+    const visited = new Set([selectedNode]);
+    let cur = selectedNode;
+    while (successor.has(cur)) {
+      const nxt = successor.get(cur)!;
+      path.push(nxt);
+      if (visited.has(nxt)) break;
+      visited.add(nxt);
+      cur = nxt;
+    }
+
+    if (path.length < 2) {
+      pathAnimRef.current = null;
+      return;
+    }
+
+    const anim = { pathIndices: path, progress: 0, active: true, rafId: 0 };
+    pathAnimRef.current = anim;
+
+    const EDGES_PER_SEC = 1.8;
+    let last = performance.now();
+
+    function tick(now: number) {
+      if (!anim.active) return;
+      const dt = (now - last) / 1000;
+      last = now;
+      anim.progress += dt * EDGES_PER_SEC;
+      if (anim.progress >= path.length - 1) {
+        anim.progress = 0;
+      }
+      redrawRef.current?.();
+      anim.rafId = requestAnimationFrame(tick);
+    }
+    anim.rafId = requestAnimationFrame(tick);
+
+    return () => {
+      anim.active = false;
+      cancelAnimationFrame(anim.rafId);
+    };
+  }, [selectedNode, otg, instance]);
+
   return (
     <div className="flex-1 flex flex-col min-w-0 relative">
-      {otg && lon && (
-        <div className="absolute top-3 right-3 z-10">
-          <Tabs
-            value={viewMode}
-            onValueChange={(v) => setViewMode(v as ViewMode)}
-          >
-            <TabsList className="h-8">
-              <TabsTrigger value="otg" className="text-xs px-3 h-6">
-                OTG
-              </TabsTrigger>
-              <TabsTrigger value="lon" className="text-xs px-3 h-6">
-                LON-d1
-              </TabsTrigger>
-              <TabsTrigger value="side-by-side" className="text-xs px-3 h-6">
-                Side-by-side
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
+      {otg && (
+        <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
+          {lon && (
+            <Tabs
+              value={viewMode}
+              onValueChange={(v) => setViewMode(v as ViewMode)}
+            >
+              <TabsList className="h-8">
+                <TabsTrigger value="otg" className="text-xs px-3 h-6">
+                  OTG
+                </TabsTrigger>
+                <TabsTrigger value="lon" className="text-xs px-3 h-6">
+                  LON-d1
+                </TabsTrigger>
+                <TabsTrigger value="side-by-side" className="text-xs px-3 h-6">
+                  Side-by-side
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+          )}
+          {show3DToggle && onToggle3D && (
+            <button
+              onClick={onToggle3D}
+              className={`px-3 py-1 text-xs rounded-md border transition-colors h-8 ${
+                view3D
+                  ? "bg-primary/15 text-primary border-primary/30 font-medium"
+                  : "bg-card text-muted-foreground border-border hover:text-foreground hover:bg-muted/50"
+              }`}
+            >
+              {view3D ? "3D Landscape" : "3D"}
+            </button>
+          )}
         </div>
       )}
 
