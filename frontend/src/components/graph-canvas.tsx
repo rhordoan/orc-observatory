@@ -1,15 +1,26 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import * as d3 from "d3";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { InstanceData, OTGData, LONData } from "@/lib/types";
 
 const TRAJECTORY_COLORS: Record<string, string> = {
-  orc: "oklch(0.795 0.148 71.1)",
-  random: "oklch(0.6 0.15 250)",
-  rrhc: "oklch(0.58 0.01 75)",
+  orc: "#d4a03c",
+  random: "#5b8bd4",
+  rrhc: "#8a8a8a",
 };
+
+const FUNNEL_COLORS = [
+  "#d4a03c", // amber
+  "#3cb88c", // teal
+  "#5b8bd4", // blue
+  "#d47c3c", // coral
+  "#9b6bbd", // purple
+  "#8bc45b", // lime
+  "#3cb8c8", // cyan
+  "#d46b8c", // pink
+];
 
 interface GraphCanvasProps {
   instance: InstanceData | null;
@@ -21,6 +32,22 @@ interface GraphCanvasProps {
 }
 
 type ViewMode = "otg" | "lon" | "side-by-side";
+
+type NodeDatum = d3.SimulationNodeDatum & {
+  idx: number;
+  fitness: number;
+  basinSize: number;
+  funnelIdx: number;
+  isAttractor: boolean;
+  radius: number;
+};
+
+type EdgeDatum = {
+  source: NodeDatum;
+  target: NodeDatum;
+  kappa: number;
+  color: string;
+};
 
 export function GraphCanvas({
   instance,
@@ -35,63 +62,57 @@ export function GraphCanvas({
 
   const selectedNodeRef = useRef(selectedNode);
   const onNodeSelectRef = useRef(onNodeSelect);
+  const hoveredRef = useRef<NodeDatum | null>(null);
+  const dragNodeRef = useRef<NodeDatum | null>(null);
 
   useEffect(() => {
     selectedNodeRef.current = selectedNode;
     onNodeSelectRef.current = onNodeSelect;
-    
-    if (!containerRef.current) return;
-    d3.select(containerRef.current).selectAll<SVGCircleElement, any>("circle")
-      .attr("stroke", (d) => d.idx === selectedNode ? "var(--primary)" : (d.isAttractor ? "var(--foreground)" : "transparent"))
-      .attr("stroke-width", (d) => d.idx === selectedNode ? 3 : (d.isAttractor ? 2 : 0));
   }, [selectedNode, onNodeSelect]);
 
   useEffect(() => {
     if (!containerRef.current || !instance || !otg) return;
 
-    const container = d3.select(containerRef.current);
-    container.selectAll("svg").remove();
+    const el = containerRef.current;
+    el.innerHTML = "";
 
-    const width = containerRef.current.clientWidth / (viewMode === "side-by-side" ? 2 : 1);
-    const height = containerRef.current.clientHeight;
+    const totalWidth = el.clientWidth;
+    const height = el.clientHeight;
+    if (totalWidth <= 0 || height <= 0) return;
+
+    const dpr = window.devicePixelRatio || 1;
+
+    const cs = getComputedStyle(document.documentElement);
+    const thFg = cs.getPropertyValue("--foreground").trim() || "#1a1a1a";
+    const thMuted = cs.getPropertyValue("--muted-foreground").trim() || "#888";
+    const thPrimary = cs.getPropertyValue("--primary").trim() || "#d4a03c";
+    const thBorder = cs.getPropertyValue("--border").trim() || "#ddd";
+
+    const toColor = (v: string) =>
+      v.startsWith("oklch") ? v : v.startsWith("#") ? v : `oklch(${v})`;
+
+    const fgColor = toColor(thFg);
+    const mutedColor = toColor(thMuted);
+    const primaryColor = toColor(thPrimary);
+    const borderColor = toColor(thBorder);
 
     const optima = instance.optima;
     const funnels = otg.funnels;
 
-    // Build funnel membership map for coloring
     const funnelOf = new Map<number, number>();
     funnels.forEach((f, fi) => {
       f.member_indices.forEach((mi) => funnelOf.set(mi, fi));
     });
 
-    const funnelColors = [
-      "oklch(0.795 0.148 71.1)",    // amber
-      "oklch(0.65 0.18 160)",       // teal
-      "oklch(0.65 0.15 250)",       // blue
-      "oklch(0.70 0.16 30)",        // coral
-      "oklch(0.62 0.13 310)",       // purple
-      "oklch(0.75 0.12 95)",        // lime
-      "oklch(0.60 0.18 200)",       // cyan
-      "oklch(0.68 0.15 350)",       // pink
-    ];
-
     const minKappa = d3.min(otg.edges, (d) => d.min_kappa) ?? -1;
     const kappaColor = d3.scaleLinear<string>()
       .domain([minKappa, 0])
-      .range(["oklch(0.6 0.2 25)", "oklch(0.65 0.15 150)"])
+      .range(["#c45a3a", "#5aaa7a"])
       .clamp(true);
 
     const maxBasin = d3.max(optima, (o) => o.basin_size) ?? 1;
     const nodeRadius = (basinSize: number) =>
       4 + 14 * Math.sqrt(basinSize / maxBasin);
-
-    type NodeDatum = d3.SimulationNodeDatum & {
-      idx: number;
-      fitness: number;
-      basinSize: number;
-      funnelIdx: number;
-      isAttractor: boolean;
-    };
 
     const attractorSet = new Set(funnels.map((f) => f.attractor_idx));
 
@@ -101,231 +122,321 @@ export function GraphCanvas({
       basinSize: o.basin_size,
       funnelIdx: funnelOf.get(o.list_idx) ?? 0,
       isAttractor: attractorSet.has(o.list_idx),
+      radius: nodeRadius(o.basin_size),
     }));
 
     const nodeByIdx = new Map(nodes.map((n) => [n.idx, n]));
 
-    const activeOtgEdges = otg.edges
-      .map((e) => ({
-        source: nodeByIdx.get(e.source),
-        target: nodeByIdx.get(e.target),
-        kappa: e.min_kappa,
-      }))
-      .filter((e): e is { source: NodeDatum; target: NodeDatum; kappa: number } =>
-        e.source !== undefined && e.target !== undefined
-      );
+    function resolveEdges(
+      raw: { source: number; target: number; min_kappa: number }[],
+      isOtg: boolean
+    ): EdgeDatum[] {
+      return raw
+        .map((e) => {
+          const src = nodeByIdx.get(e.source);
+          const tgt = nodeByIdx.get(e.target);
+          if (!src || !tgt || src === tgt) return null;
+          return {
+            source: src,
+            target: tgt,
+            kappa: e.min_kappa,
+            color: isOtg ? kappaColor(e.min_kappa) : mutedColor,
+          };
+        })
+        .filter((e): e is EdgeDatum => e !== null);
+    }
 
-    const activeLonEdges = lon ? lon.edges
-      .map((e) => ({
-        source: nodeByIdx.get(e.source),
-        target: nodeByIdx.get(e.target),
-        kappa: 0,
-      }))
-      .filter((e): e is { source: NodeDatum; target: NodeDatum; kappa: number } =>
-        e.source !== undefined && e.target !== undefined
-      ) : [];
+    const otgEdges = resolveEdges(otg.edges, true);
+    const lonEdges = lon ? resolveEdges(lon.edges.map((e) => ({ ...e, min_kappa: 0 })), false) : [];
 
-    // The simulation runs ONLY on the OTG edges so that OTG clusters funnels nicely
-    const simLinks = activeOtgEdges.filter((e) => e.source !== e.target);
+    const simLinks = otgEdges.filter((e) => e.source !== e.target);
 
     const isLarge = nodes.length > 200;
-    const chargeStrength = isLarge ? -80 : -200;
-    const linkDist = isLarge ? 30 : 60;
 
     const simulation = d3
       .forceSimulation(nodes)
       .force(
         "link",
-        d3.forceLink(simLinks).id((d) => (d as NodeDatum).idx).distance(linkDist)
+        d3.forceLink(simLinks).id((d) => (d as NodeDatum).idx).distance(isLarge ? 30 : 60)
       )
-      .force("charge", d3.forceManyBody().strength(chargeStrength).theta(isLarge ? 0.9 : 0.8))
-      .force("center", d3.forceCenter(width / 2, height / 2))
-      .force("collision", d3.forceCollide().radius((d) =>
-        nodeRadius((d as NodeDatum).basinSize) + 2
-      ));
+      .force("charge", d3.forceManyBody().strength(isLarge ? -80 : -200).theta(isLarge ? 0.9 : 0.8))
+      .force("center", d3.forceCenter(0, 0))
+      .force("collision", d3.forceCollide().radius((d) => (d as NodeDatum).radius + 2));
 
     if (isLarge) simulation.alphaDecay(0.05);
 
-    function createGraph(svgNode: any, edges: typeof activeOtgEdges, isOtg: boolean) {
-      const svg = d3.select(svgNode)
-        .attr("width", width)
-        .attr("height", height)
-        .style("border-right", isOtg && viewMode === "side-by-side" ? "1px solid var(--border)" : "none");
+    const showLabels = nodes.length <= 150;
+    const labelNodes = showLabels ? nodes : nodes.filter((n) => n.isAttractor);
 
-      const g = svg.append("g").attr("class", "graph-container")
-        .style("will-change", "transform");
-
-      const zoom = d3.zoom<SVGSVGElement, unknown>()
-        .scaleExtent([0.1, 8])
-        .on("zoom", (event) => g.attr("transform", event.transform));
-      svg.call(zoom);
-
-      // Arrow markers
-      svg.append("defs").append("marker")
-        .attr("id", "arrowhead")
-        .attr("viewBox", "0 -4 8 8")
-        .attr("refX", 8)
-        .attr("refY", 0)
-        .attr("markerWidth", 6)
-        .attr("markerHeight", 6)
-        .attr("orient", "auto")
-        .append("path")
-        .attr("d", "M0,-3L8,0L0,3Z")
-        .attr("fill", "var(--muted-foreground)");
-
-      const validEdges = edges.filter((e) => e.source !== e.target);
-
-      const linkSel = g.append("g").attr("class", "edges")
-        .selectAll("line")
-        .data(validEdges)
-        .join("line")
-        .attr("stroke", (d) => isOtg ? kappaColor(d.kappa) : "var(--muted-foreground)")
-        .attr("stroke-width", 1.5)
-        .attr("stroke-opacity", 0.6)
-        .attr("marker-end", "url(#arrowhead)");
-
-      const nodeSel = g.append("g").attr("class", "nodes")
-        .selectAll<SVGCircleElement, NodeDatum>("circle")
-        .data(nodes)
-        .join("circle")
-        .attr("r", (d) => nodeRadius(d.basinSize))
-        .attr("fill", (d) => funnelColors[d.funnelIdx % funnelColors.length])
-        .attr("fill-opacity", (d) => (d.isAttractor ? 1 : 0.7))
-        .attr("stroke", (d) => d.idx === selectedNodeRef.current ? "var(--primary)" : (d.isAttractor ? "var(--foreground)" : "transparent"))
-        .attr("stroke-width", (d) => d.idx === selectedNodeRef.current ? 3 : (d.isAttractor ? 2 : 0))
-        .attr("cursor", "pointer")
-        .on("click", (_event, d) => onNodeSelectRef.current(d.idx === selectedNodeRef.current ? null : d.idx))
-        .on("mouseenter", function (_, d) {
-          d3.select(this)
-            .attr("fill-opacity", 1)
-            .attr("stroke", "var(--foreground)")
-            .attr("stroke-width", 2);
-        })
-        .on("mouseleave", function (_, d) {
-          d3.select(this)
-            .attr("fill-opacity", d.isAttractor ? 1 : 0.7)
-            .attr("stroke", d.idx === selectedNodeRef.current ? "var(--primary)" : (d.isAttractor ? "var(--foreground)" : "transparent"))
-            .attr("stroke-width", d.idx === selectedNodeRef.current ? 3 : (d.isAttractor ? 2 : 0));
-        });
-
-      if (isOtg) {
-        nodeSel.call(
-          d3.drag<SVGCircleElement, NodeDatum>()
-            .on("start", (event, d) => {
-              if (!event.active) simulation.alphaTarget(0.3).restart();
-              d.fx = d.x;
-              d.fy = d.y;
-            })
-            .on("drag", (event, d) => {
-              d.fx = event.x;
-              d.fy = event.y;
-            })
-            .on("end", (event, d) => {
-              if (!event.active) simulation.alphaTarget(0);
-              d.fx = null;
-              d.fy = null;
-            })
-        );
-      }
-
-      // FR7.7: Trajectory overlay rings
-      const trajGroup = g.append("g").attr("class", "trajectories");
-      if (isOtg && trajectories) {
-        Object.entries(trajectories).forEach(([algo, visited], ti) => {
-          const visitedSet = new Set(visited);
-          const ringNodes = nodes.filter((n) => visitedSet.has(n.idx));
-          trajGroup
-            .selectAll(`.traj-${algo}`)
-            .data(ringNodes)
-            .join("circle")
-            .attr("class", `traj-${algo}`)
-            .attr("r", (d) => nodeRadius(d.basinSize) + 3 + ti * 3)
-            .attr("fill", "none")
-            .attr("stroke", TRAJECTORY_COLORS[algo] ?? "#888")
-            .attr("stroke-width", 2)
-            .attr("stroke-dasharray", algo === "rrhc" ? "3,3" : "none")
-            .attr("opacity", 0.7)
-            .attr("pointer-events", "none");
-        });
-      }
-
-      const showLabels = nodes.length <= 150;
-      const labelData = showLabels ? nodes : nodes.filter((n) => n.isAttractor);
-      const labelSel = g.append("g").attr("class", "labels")
-        .selectAll("text")
-        .data(labelData)
-        .join("text")
-        .text((d) => d.fitness.toFixed(2))
-        .attr("font-size", "9px")
-        .attr("font-family", "var(--font-mono)")
-        .attr("fill", "var(--foreground)")
-        .attr("text-anchor", "middle")
-        .attr("dy", (d) => -nodeRadius(d.basinSize) - 4)
-        .attr("opacity", 0.7)
-        .attr("pointer-events", "none");
-        
-      // Title
-      svg.append("text")
-        .attr("x", 20)
-        .attr("y", 30)
-        .attr("fill", "var(--muted-foreground)")
-        .attr("font-size", "12px")
-        .attr("font-weight", "500")
-        .attr("letter-spacing", "0.05em")
-        .text(isOtg ? "ORC Transition Graph (OTG)" : "Local Optima Network (LON-d1)");
-
-      return { linkSel, nodeSel, labelSel, trajGroup };
-    }
-
-    const graphs: any[] = [];
-    if (viewMode === "otg" || viewMode === "side-by-side") {
-      const svg = container.append("svg").node();
-      graphs.push(createGraph(svg, activeOtgEdges, true));
-    }
-    if (viewMode === "lon" || viewMode === "side-by-side") {
-      const svg = container.append("svg").node();
-      graphs.push(createGraph(svg, activeLonEdges, false));
-    }
-
-    const radiusCache = new Map<number, number>();
-    for (const n of nodes) {
-      radiusCache.set(n.idx, nodeRadius(n.basinSize));
-    }
-
-    simulation.on("tick", () => {
-      graphs.forEach(({ linkSel, nodeSel, labelSel, trajGroup }) => {
-        linkSel.each(function (this: SVGLineElement, d: any) {
-          const sx = d.source.x ?? 0;
-          const sy = d.source.y ?? 0;
-          const tx = d.target.x ?? 0;
-          const ty = d.target.y ?? 0;
-          const dx = tx - sx;
-          const dy = ty - sy;
-          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-          const r = radiusCache.get(d.target.idx) ?? 6;
-          this.setAttribute("x1", String(sx));
-          this.setAttribute("y1", String(sy));
-          this.setAttribute("x2", String(tx - (dx / dist) * r));
-          this.setAttribute("y2", String(ty - (dy / dist) * r));
-        });
-
-        nodeSel.each(function (this: SVGCircleElement, d: any) {
-          this.setAttribute("cx", String(d.x ?? 0));
-          this.setAttribute("cy", String(d.y ?? 0));
-        });
-        labelSel.each(function (this: SVGTextElement, d: any) {
-          this.setAttribute("x", String(d.x ?? 0));
-          this.setAttribute("y", String(d.y ?? 0));
-        });
-        trajGroup.selectAll("circle").each(function (this: SVGCircleElement, d: any) {
-          this.setAttribute("cx", String(d.x ?? 0));
-          this.setAttribute("cy", String(d.y ?? 0));
+    const trajSets: { algo: string; color: string; visited: Set<number>; ring: number }[] = [];
+    if (trajectories) {
+      Object.entries(trajectories).forEach(([algo, visited], ti) => {
+        trajSets.push({
+          algo,
+          color: TRAJECTORY_COLORS[algo] ?? "#888",
+          visited: new Set(visited),
+          ring: 3 + ti * 3,
         });
       });
+    }
+
+    type GraphView = {
+      canvas: HTMLCanvasElement;
+      ctx: CanvasRenderingContext2D;
+      edges: EdgeDatum[];
+      isOtg: boolean;
+      transform: d3.ZoomTransform;
+      width: number;
+      title: string;
+    };
+
+    function createCanvasView(w: number, edges: EdgeDatum[], isOtg: boolean, title: string): GraphView {
+      const canvas = document.createElement("canvas");
+      canvas.style.width = `${w}px`;
+      canvas.style.height = `${height}px`;
+      canvas.width = w * dpr;
+      canvas.height = height * dpr;
+      el.appendChild(canvas);
+
+      const ctx = canvas.getContext("2d")!;
+      ctx.scale(dpr, dpr);
+
+      return { canvas, ctx, edges, isOtg, transform: d3.zoomIdentity, width: w, title };
+    }
+
+    const views: GraphView[] = [];
+    const isSideBySide = viewMode === "side-by-side";
+    const panelW = isSideBySide ? totalWidth / 2 : totalWidth;
+
+    if (viewMode === "otg" || isSideBySide)
+      views.push(createCanvasView(panelW, otgEdges, true, "ORC Transition Graph (OTG)"));
+    if (viewMode === "lon" || isSideBySide)
+      views.push(createCanvasView(panelW, lonEdges, false, "Local Optima Network (LON-d1)"));
+
+    function drawArrow(ctx: CanvasRenderingContext2D, sx: number, sy: number, ex: number, ey: number) {
+      const headLen = 6;
+      const angle = Math.atan2(ey - sy, ex - sx);
+      ctx.beginPath();
+      ctx.moveTo(ex, ey);
+      ctx.lineTo(ex - headLen * Math.cos(angle - 0.4), ey - headLen * Math.sin(angle - 0.4));
+      ctx.lineTo(ex - headLen * Math.cos(angle + 0.4), ey - headLen * Math.sin(angle + 0.4));
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    function drawView(view: GraphView) {
+      const { ctx, edges, isOtg, transform, width: w, title } = view;
+      ctx.save();
+      ctx.clearRect(0, 0, w, height);
+
+      ctx.translate(w / 2, height / 2);
+      ctx.translate(transform.x, transform.y);
+      ctx.scale(transform.k, transform.k);
+
+      // Edges
+      ctx.lineWidth = 1.5;
+      ctx.globalAlpha = 0.6;
+      for (const e of edges) {
+        const sx = e.source.x ?? 0;
+        const sy = e.source.y ?? 0;
+        const tx = e.target.x ?? 0;
+        const ty = e.target.y ?? 0;
+        const dx = tx - sx;
+        const dy = ty - sy;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const r = e.target.radius;
+        const ex = tx - (dx / dist) * r;
+        const ey = ty - (dy / dist) * r;
+
+        ctx.strokeStyle = e.color;
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(ex, ey);
+        ctx.stroke();
+
+        ctx.fillStyle = e.color;
+        drawArrow(ctx, sx, sy, ex, ey);
+      }
+      ctx.globalAlpha = 1;
+
+      // Trajectory rings
+      if (isOtg && trajSets.length > 0) {
+        ctx.globalAlpha = 0.7;
+        ctx.lineWidth = 2;
+        for (const traj of trajSets) {
+          ctx.strokeStyle = traj.color;
+          const isDashed = traj.algo === "rrhc";
+          if (isDashed) ctx.setLineDash([3, 3]);
+          for (const n of nodes) {
+            if (!traj.visited.has(n.idx)) continue;
+            ctx.beginPath();
+            ctx.arc(n.x ?? 0, n.y ?? 0, n.radius + traj.ring, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+          if (isDashed) ctx.setLineDash([]);
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      // Nodes
+      const sel = selectedNodeRef.current;
+      const hov = hoveredRef.current;
+      for (const n of nodes) {
+        const cx = n.x ?? 0;
+        const cy = n.y ?? 0;
+        const isSel = n.idx === sel;
+        const isHov = n === hov;
+        const color = FUNNEL_COLORS[n.funnelIdx % FUNNEL_COLORS.length];
+
+        ctx.beginPath();
+        ctx.arc(cx, cy, n.radius, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.globalAlpha = n.isAttractor || isHov ? 1 : 0.7;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+
+        if (isSel) {
+          ctx.strokeStyle = primaryColor;
+          ctx.lineWidth = 3;
+          ctx.stroke();
+        } else if (isHov || n.isAttractor) {
+          ctx.strokeStyle = fgColor;
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+      }
+
+      // Labels
+      ctx.font = "9px monospace";
+      ctx.fillStyle = fgColor;
+      ctx.textAlign = "center";
+      ctx.globalAlpha = 0.8;
+      for (const n of labelNodes) {
+        ctx.fillText(n.fitness.toFixed(2), n.x ?? 0, (n.y ?? 0) - n.radius - 4);
+      }
+      ctx.globalAlpha = 1;
+
+      ctx.restore();
+
+      ctx.fillStyle = mutedColor;
+      ctx.font = "500 12px sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText(title, 20, 30);
+    }
+
+    let animFrame = 0;
+    function scheduleRedraw() {
+      cancelAnimationFrame(animFrame);
+      animFrame = requestAnimationFrame(() => views.forEach(drawView));
+    }
+
+    simulation.on("tick", scheduleRedraw);
+
+    // Zoom
+    views.forEach((view) => {
+      const zoom = d3.zoom<HTMLCanvasElement, unknown>()
+        .scaleExtent([0.1, 8])
+        .on("zoom", (event) => {
+          view.transform = event.transform;
+          scheduleRedraw();
+        });
+      d3.select(view.canvas).call(zoom);
     });
+
+    // Hit testing
+    function hitTest(view: GraphView, mx: number, my: number): NodeDatum | null {
+      const t = view.transform;
+      const x = (mx - view.width / 2 - t.x) / t.k;
+      const y = (my - height / 2 - t.y) / t.k;
+
+      let closest: NodeDatum | null = null;
+      let closestDist = Infinity;
+      for (const n of nodes) {
+        const dx = (n.x ?? 0) - x;
+        const dy = (n.y ?? 0) - y;
+        const d = dx * dx + dy * dy;
+        const r = n.radius + 2;
+        if (d < r * r && d < closestDist) {
+          closest = n;
+          closestDist = d;
+        }
+      }
+      return closest;
+    }
+
+    // Mouse interactions
+    const primaryView = views[0];
+    if (primaryView) {
+      const canvas = primaryView.canvas;
+
+      canvas.addEventListener("mousemove", (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+
+        if (dragNodeRef.current) {
+          const t = primaryView.transform;
+          dragNodeRef.current.fx = (mx - primaryView.width / 2 - t.x) / t.k;
+          dragNodeRef.current.fy = (my - height / 2 - t.y) / t.k;
+          simulation.alphaTarget(0.3).restart();
+          return;
+        }
+
+        const hit = hitTest(primaryView, mx, my);
+        if (hit !== hoveredRef.current) {
+          hoveredRef.current = hit;
+          canvas.style.cursor = hit ? "pointer" : "default";
+          scheduleRedraw();
+        }
+      });
+
+      canvas.addEventListener("mousedown", (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const hit = hitTest(primaryView, e.clientX - rect.left, e.clientY - rect.top);
+        if (hit) {
+          e.stopPropagation();
+          dragNodeRef.current = hit;
+          hit.fx = hit.x;
+          hit.fy = hit.y;
+          simulation.alphaTarget(0.3).restart();
+
+          const onUp = () => {
+            if (dragNodeRef.current) {
+              dragNodeRef.current.fx = null;
+              dragNodeRef.current.fy = null;
+              dragNodeRef.current = null;
+              simulation.alphaTarget(0);
+            }
+            window.removeEventListener("mouseup", onUp);
+            window.removeEventListener("mousemove", onMove);
+          };
+          const onMove = (ev: MouseEvent) => {
+            if (!dragNodeRef.current) return;
+            const r = canvas.getBoundingClientRect();
+            const t = primaryView.transform;
+            dragNodeRef.current.fx = (ev.clientX - r.left - primaryView.width / 2 - t.x) / t.k;
+            dragNodeRef.current.fy = (ev.clientY - r.top - height / 2 - t.y) / t.k;
+          };
+          window.addEventListener("mouseup", onUp);
+          window.addEventListener("mousemove", onMove);
+        }
+      });
+
+      canvas.addEventListener("click", (e) => {
+        if (dragNodeRef.current) return;
+        const rect = canvas.getBoundingClientRect();
+        const hit = hitTest(primaryView, e.clientX - rect.left, e.clientY - rect.top);
+        if (hit) {
+          onNodeSelectRef.current(hit.idx === selectedNodeRef.current ? null : hit.idx);
+        } else {
+          onNodeSelectRef.current(null);
+        }
+      });
+    }
 
     return () => {
       simulation.stop();
+      cancelAnimationFrame(animFrame);
     };
   }, [instance, otg, lon, viewMode, trajectories]);
 
