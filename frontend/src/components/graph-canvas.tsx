@@ -58,6 +58,7 @@ export function GraphCanvas({
   trajectories,
 }: GraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("otg");
 
   const selectedNodeRef = useRef(selectedNode);
@@ -104,10 +105,11 @@ export function GraphCanvas({
       f.member_indices.forEach((mi) => funnelOf.set(mi, fi));
     });
 
+    const isDark = document.documentElement.classList.contains("dark");
     const minKappa = d3.min(otg.edges, (d) => d.min_kappa) ?? -1;
     const kappaColor = d3.scaleLinear<string>()
       .domain([minKappa, 0])
-      .range(["#c45a3a", "#5aaa7a"])
+      .range(isDark ? ["#d4713a", "#5aaa7a"] : ["#b8432a", "#3d8a5a"])
       .clamp(true);
 
     const maxBasin = d3.max(optima, (o) => o.basin_size) ?? 1;
@@ -388,6 +390,24 @@ export function GraphCanvas({
           canvas.style.cursor = hit ? "pointer" : "default";
           scheduleRedraw();
         }
+
+        const tip = tooltipRef.current;
+        if (tip) {
+          if (hit && !dragNodeRef.current) {
+            const funnel = otg.funnels.find((f) => f.member_indices.includes(hit.idx));
+            tip.innerHTML =
+              `<div class="font-semibold">${instance.optima[hit.idx]?.label ?? hit.idx}</div>` +
+              `<div>Fitness: <span class="font-mono">${hit.fitness.toFixed(4)}</span></div>` +
+              `<div>Basin: <span class="font-mono">${hit.basinSize}</span></div>` +
+              (funnel ? `<div>Funnel: <span class="font-mono">${funnel.member_indices.length} members</span></div>` : "") +
+              (hit.isAttractor ? `<div class="text-primary font-medium">Attractor</div>` : "");
+            tip.style.left = `${mx + 14}px`;
+            tip.style.top = `${my - 10}px`;
+            tip.style.opacity = "1";
+          } else {
+            tip.style.opacity = "0";
+          }
+        }
       });
 
       canvas.addEventListener("mousedown", (e) => {
@@ -470,10 +490,16 @@ export function GraphCanvas({
           </p>
         </div>
       ) : (
-        <div
-          ref={containerRef}
-          className="flex-1 flex w-full h-full min-h-0"
-        />
+        <div className="relative flex-1 flex min-h-0">
+          <div
+            ref={containerRef}
+            className="flex-1 flex w-full h-full min-h-0"
+          />
+          <div
+            ref={tooltipRef}
+            className="absolute z-20 pointer-events-none rounded-md border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md transition-opacity duration-150 opacity-0 max-w-[220px]"
+          />
+        </div>
       )}
     </div>
   );
