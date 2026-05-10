@@ -181,13 +181,13 @@ export function Sidebar({
               )}
             </span>
             <span
-              className={`w-8 h-4 rounded-full relative transition-colors ${
+              className={`w-8 h-4 rounded-full relative inline-flex items-center shrink-0 transition-colors ${
                 useGpu ? "bg-green-500/60" : "bg-border"
               }`}
             >
               <span
-                className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform ${
-                  useGpu ? "translate-x-4" : "translate-x-0.5"
+                className={`absolute w-3 h-3 rounded-full bg-white shadow-sm transition-all duration-200 ${
+                  useGpu ? "left-[18px]" : "left-[2px]"
                 }`}
               />
             </span>
