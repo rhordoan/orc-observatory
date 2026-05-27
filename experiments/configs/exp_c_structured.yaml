@@ -10,9 +10,9 @@ n_shuffles: 5
 optima_mode: sample
 grid:
   items:
-    - {type: tsplib, instance: eil51, n_restarts: 300, seeds: [0,1,2]}
-    - {type: tsplib, instance: berlin52, n_restarts: 300, seeds: [0,1,2]}
-    - {type: tsplib, instance: kroA100, n_restarts: 200, seeds: [0,1,2]}
-    - {type: qaplib, instance: nug12, n_restarts: 300, seeds: [0,1,2]}
-    - {type: qaplib, instance: chr15a, n_restarts: 300, seeds: [0,1,2]}
-    - {type: qaplib, instance: rou20, n_restarts: 300, seeds: [0,1,2]}
+    - {type: tsplib, instance: eil51, n_restarts: 100, seeds: [0,1,2]}
+    - {type: tsplib, instance: berlin52, n_restarts: 100, seeds: [0,1,2]}
+    - {type: tsplib, instance: kroA100, n_restarts: 80, seeds: [0,1,2]}
+    - {type: qaplib, instance: nug12, n_restarts: 100, seeds: [0,1,2]}
+    - {type: qaplib, instance: chr15a, n_restarts: 100, seeds: [0,1,2]}
+    - {type: qaplib, instance: rou20, n_restarts: 80, seeds: [0,1,2]}

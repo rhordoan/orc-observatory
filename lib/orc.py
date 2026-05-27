@@ -77,40 +77,27 @@ def compute_orc_explained(
     y_exclusive = sorted(support_y - support_x)
 
     k = space.degree
-    n_shared = len(shared)
     n_excl = len(x_exclusive)
 
     assert n_excl == len(y_exclusive), (
         f"Exclusive neighbor counts differ: {n_excl} vs {len(y_exclusive)}"
     )
 
-    # Shared elements self-match at cost 0
     shared_cost = 0.0
 
     if n_excl == 0:
-        # Fully overlapping neighborhoods (unusual)
         w1 = 0.0
     else:
-        # Build cost matrix for exclusive neighbors
-        cost_matrix = np.zeros((n_excl, n_excl))
-        for i, a in enumerate(x_exclusive):
-            f_a = space.fitness(a)
-            for j, b in enumerate(y_exclusive):
-                f_b = space.fitness(b)
-                # Graph distance between exclusive neighbors is always 2
-                # (by the disjoint-neighborhood property)
-                structural = 2.0
-                fitness_penalty = gamma * abs(f_a - f_b)
-                cost_matrix[i, j] = structural + fitness_penalty
+        f_x = np.array([space.fitness(a) for a in x_exclusive])
+        f_y = np.array([space.fitness(b) for b in y_exclusive])
+        cost_matrix = 2.0 + gamma * np.abs(f_x[:, None] - f_y[None, :])
 
-        # Solve the assignment problem (Hungarian algorithm)
         row_ind, col_ind = linear_sum_assignment(cost_matrix)
         excl_total = cost_matrix[row_ind, col_ind].sum()
 
         matching = list(zip(row_ind.tolist(), col_ind.tolist()))
         pair_costs = [float(cost_matrix[r, c]) for r, c in zip(row_ind, col_ind)]
 
-        # W1 = (shared_cost + exclusive_cost) / (k + 1)
         w1 = (shared_cost + excl_total) / (k + 1)
 
     if n_excl == 0:
@@ -138,17 +125,26 @@ def compute_all_orc(
     space: SearchSpace,
     x: int,
     gamma: float = 1.0,
+    max_neighbors: int | None = None,
 ) -> dict[int, float]:
-    """Compute ORC from node x to all its neighbors.
+    """Compute ORC from node x to its neighbors.
 
     Uses sorted matching (O(k log k) per edge) for bit-flip spaces with
     precomputed fitness arrays; falls back to Hungarian otherwise.
+
+    When *max_neighbors* is set and degree > max_neighbors, evaluates only the
+    max_neighbors nearest-fitness neighbors (a good proxy for most-negative ORC).
 
     Returns {neighbor_idx: kappa_value} dict.
     """
     if hasattr(space, "fitnesses") and not hasattr(space, "neighbor_table"):
         return _compute_all_orc_sorted(space, x, gamma)
     nbrs = space.neighbors(x)
+    if max_neighbors is not None and len(nbrs) > max_neighbors:
+        fx = space.fitness(x)
+        gaps = np.array([abs(space.fitness(int(n)) - fx) for n in nbrs])
+        top_k = np.argsort(gaps)[:max_neighbors]
+        nbrs = nbrs[top_k]
     return {int(y): compute_orc(space, x, y, gamma) for y in nbrs}
 
 

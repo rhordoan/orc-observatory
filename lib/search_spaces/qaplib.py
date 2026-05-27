@@ -31,6 +31,7 @@ class QAPLIBSearchSpace:
         self._swap_pairs = [(i, j) for i in range(self._n) for j in range(i + 1, self._n)]
         self._degree = len(self._swap_pairs)
         self._fitness_cache: dict[int, float] = {}
+        self._nbr_cache: dict[int, np.ndarray] = {}
 
         t0 = time.time()
         for _ in range(n_restarts):
@@ -63,13 +64,17 @@ class QAPLIBSearchSpace:
         return self._fitness_cache[idx]
 
     def neighbors(self, idx: int) -> np.ndarray:
+        cached = self._nbr_cache.get(idx)
+        if cached is not None:
+            return cached.copy()
         perm = list(self._perms[idx])
-        nbrs = []
-        for i, j in self._swap_pairs:
-            swapped = perm.copy()
-            swapped[i], swapped[j] = swapped[j], swapped[i]
-            nbrs.append(self._register(tuple(swapped)))
-        return np.array(nbrs, dtype=np.intp)
+        nbrs = np.empty(self._degree, dtype=np.intp)
+        for k, (i, j) in enumerate(self._swap_pairs):
+            perm[i], perm[j] = perm[j], perm[i]
+            nbrs[k] = self._register(tuple(perm))
+            perm[i], perm[j] = perm[j], perm[i]
+        self._nbr_cache[idx] = nbrs
+        return nbrs.copy()
 
     def solution_label(self, idx: int) -> str:
         return str(self._perms[idx][: min(8, self._n)])

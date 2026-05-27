@@ -130,31 +130,30 @@ def build_otg(
     orc_values: dict[int, dict[int, float]] = {}
     successor = np.full(n, -1, dtype=np.intp)
 
+    max_nbrs = 60 if space.degree > 100 else None
+
     if on_edge is not None:
-        # Streaming mode: interleave ORC computation + edge resolution per optimum
-        # so the caller receives incremental progress.
         for i, opt in enumerate(optima):
             if on_computing is not None:
                 on_computing(i)
-            orc_values[i] = compute_all_orc(space, opt.idx, gamma)
+            orc_values[i] = compute_all_orc(space, opt.idx, gamma, max_neighbors=max_nbrs)
             edge = _resolve_edge(i, optima, orc_values[i], space, opt_idx_map)
             successor[i] = edge.target
             edges.append(edge)
             on_edge(edge)
     else:
-        # Batch mode: parallel Phase 1, then sequential Phase 2.
         n_workers = min(os.cpu_count() or 4, n, 8)
         if n_workers > 1 and n > 4:
             with ThreadPoolExecutor(max_workers=n_workers) as pool:
                 futures = {
-                    pool.submit(compute_all_orc, space, opt.idx, gamma): i
+                    pool.submit(compute_all_orc, space, opt.idx, gamma, max_nbrs): i
                     for i, opt in enumerate(optima)
                 }
                 for future in as_completed(futures):
                     orc_values[futures[future]] = future.result()
         else:
             for i, opt in enumerate(optima):
-                orc_values[i] = compute_all_orc(space, opt.idx, gamma)
+                orc_values[i] = compute_all_orc(space, opt.idx, gamma, max_neighbors=max_nbrs)
 
         for i, opt in enumerate(optima):
             edge = _resolve_edge(i, optima, orc_values[i], space, opt_idx_map)

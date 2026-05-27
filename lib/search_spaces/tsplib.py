@@ -40,6 +40,7 @@ class TSPLIBSearchSpace:
         ]
         self._degree = len(self._moves)
         self._fitness_cache: dict[int, float] = {}
+        self._nbr_cache: dict[int, np.ndarray] = {}
 
         t0 = time.time()
         for _ in range(n_restarts):
@@ -72,12 +73,16 @@ class TSPLIBSearchSpace:
         return self._fitness_cache[idx]
 
     def neighbors(self, idx: int) -> np.ndarray:
+        cached = self._nbr_cache.get(idx)
+        if cached is not None:
+            return cached.copy()
         tour = self._tours[idx]
-        nbrs = []
-        for i, j in self._moves:
+        nbrs = np.empty(self._degree, dtype=np.intp)
+        for k, (i, j) in enumerate(self._moves):
             new_tour = tour[: i + 1] + tour[j : i : -1] + tour[j + 1 :]
-            nbrs.append(self._register(new_tour))
-        return np.array(nbrs, dtype=np.intp)
+            nbrs[k] = self._register(new_tour)
+        self._nbr_cache[idx] = nbrs
+        return nbrs.copy()
 
     def solution_label(self, idx: int) -> str:
         return "\u2192".join(str(c) for c in self._tours[idx][:8]) + "..."
