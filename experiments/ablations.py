@@ -10,7 +10,12 @@ from experiments.metrics import escape_rate
 
 
 class ShuffledFitnessSpace:
-    """Wraps a space with permuted fitness values (topology unchanged)."""
+    """Wraps a space with permuted fitness values (topology unchanged).
+
+    For dynamically growing spaces (TSP/QAP), solutions registered after
+    the permutation was created fall back to their real fitness.  ORC
+    escape from the *original* optima still sees shuffled values.
+    """
 
     def __init__(self, base: SearchSpace, perm: np.ndarray) -> None:
         self._base = base
@@ -29,7 +34,10 @@ class ShuffledFitnessSpace:
         return self._base.degree
 
     def fitness(self, idx: int) -> float:
-        return self._base.fitness(int(self._perm[idx]))
+        idx = int(idx)
+        if idx < len(self._perm):
+            return self._base.fitness(int(self._perm[idx]))
+        return self._base.fitness(idx)
 
     def neighbors(self, idx: int) -> np.ndarray:
         return self._base.neighbors(idx)
