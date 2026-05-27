@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import numpy as np
 
 from experiments.loaders.qaplib import load_qaplib, default_data_dir
@@ -30,10 +32,12 @@ class QAPLIBSearchSpace:
         self._degree = len(self._swap_pairs)
         self._fitness_cache: dict[int, float] = {}
 
+        t0 = time.time()
         for _ in range(n_restarts):
             p = tuple(self._rng.permutation(self._n))
             opt = self._hill_climb_perm(p)
             self._register(opt)
+        print(f"    QAPLIB {instance_name}: {n_restarts} restarts -> {len(self._perms)} optima in {time.time()-t0:.1f}s", flush=True)
 
     def _register(self, perm: tuple[int, ...]) -> int:
         if perm not in self._perm_to_idx:

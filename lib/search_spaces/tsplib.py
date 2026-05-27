@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import numpy as np
 
 from experiments.loaders.tsplib import load_tsplib, default_data_dir
@@ -39,10 +41,12 @@ class TSPLIBSearchSpace:
         self._degree = len(self._moves)
         self._fitness_cache: dict[int, float] = {}
 
+        t0 = time.time()
         for _ in range(n_restarts):
             tour = self._random_tour()
             opt = self._hill_climb_tour(tour)
             self._register(opt)
+        print(f"    TSPLIB {instance_name}: {n_restarts} restarts -> {len(self._tours)} optima in {time.time()-t0:.1f}s", flush=True)
 
     def _register(self, tour: tuple[int, ...]) -> int:
         if tour not in self._tour_to_idx:

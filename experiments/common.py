@@ -73,6 +73,8 @@ def make_space(spec: dict[str, Any], use_gpu: bool = False) -> SearchSpace:
         return TSPLIBSearchSpace(
             instance_name=spec["instance"],
             data_dir=spec.get("data_dir"),
+            n_restarts=spec.get("n_restarts", 500),
+            seed=seed,
             use_gpu=use_gpu,
         )
     if kind == "qaplib":
@@ -81,6 +83,8 @@ def make_space(spec: dict[str, Any], use_gpu: bool = False) -> SearchSpace:
         return QAPLIBSearchSpace(
             instance_name=spec["instance"],
             data_dir=spec.get("data_dir"),
+            n_restarts=spec.get("n_restarts", 500),
+            seed=seed,
             use_gpu=use_gpu,
         )
     raise ValueError(f"Unknown space type: {kind}")

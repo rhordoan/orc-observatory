@@ -48,8 +48,11 @@ def _collect_with_attractor(space, inst_cfg):
 def run_escape(cfg: dict[str, Any], output_dir: Path) -> None:
     rows = []
     use_gpu = cfg.get("use_gpu", False)
-    for spec in _sweep_instances(cfg):
+    instances = _sweep_instances(cfg)
+    for ii, spec in enumerate(instances):
         t0 = time.time()
+        label = spec.get("instance", spec.get("type", "?"))
+        print(f"  escape [{ii+1}/{len(instances)}] {label} seed={spec.get('seed',0)} ...", flush=True)
         space = make_space(spec, use_gpu=use_gpu)
         inst_cfg = {**spec, "use_gpu": use_gpu, "optima_mode": spec.get("optima_mode", cfg.get("optima_mode", "enumerate"))}
         optima, attractor = _collect_with_attractor(space, inst_cfg)
@@ -82,7 +85,10 @@ def run_escape(cfg: dict[str, Any], output_dir: Path) -> None:
 def run_otg_lon(cfg: dict[str, Any], output_dir: Path) -> None:
     rows = []
     use_gpu = cfg.get("use_gpu", False)
-    for spec in _sweep_instances(cfg):
+    instances = _sweep_instances(cfg)
+    for ii, spec in enumerate(instances):
+        label = spec.get("instance", spec.get("type", "?"))
+        print(f"  otg_lon [{ii+1}/{len(instances)}] {label} seed={spec.get('seed',0)} ...", flush=True)
         space = make_space(spec, use_gpu=use_gpu)
         inst_cfg = {**spec, "use_gpu": use_gpu, "optima_mode": spec.get("optima_mode", cfg.get("optima_mode", "enumerate"))}
         optima, attractor = _collect_with_attractor(space, inst_cfg)
