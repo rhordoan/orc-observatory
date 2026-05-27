@@ -61,12 +61,16 @@ def load_qaplib(name: str, data_dir: Path | None = None) -> tuple[np.ndarray, np
         download_qaplib((name,), data_dir)
 
     with path.open(encoding="utf-8", errors="ignore") as f:
-        n = int(f.readline().strip())
-        dist = []
-        for _ in range(n):
-            dist.append([float(x) for x in f.readline().split()])
-        flow = []
-        for _ in range(n):
-            flow.append([float(x) for x in f.readline().split()])
+        tokens = f.read().split()
+    n = int(tokens[0])
+    idx = 1
+    dist = np.zeros((n, n), dtype=np.float64)
+    for i in range(n):
+        for j in range(n):
+            dist[i, j] = float(tokens[idx]); idx += 1
+    flow = np.zeros((n, n), dtype=np.float64)
+    for i in range(n):
+        for j in range(n):
+            flow[i, j] = float(tokens[idx]); idx += 1
 
-    return np.array(dist), np.array(flow), n
+    return dist, flow, n
