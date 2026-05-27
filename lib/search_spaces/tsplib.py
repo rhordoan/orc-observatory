@@ -78,15 +78,11 @@ class TSPLIBSearchSpace:
     def solution_label(self, idx: int) -> str:
         return "\u2192".join(str(c) for c in self._tours[idx][:8]) + "..."
 
-    def _tour_length(self, tour: tuple[int, ...]) -> float:
-        total = 0.0
-        for i in range(self._n):
-            a, b = tour[i], tour[(i + 1) % self._n]
-            total += self._dist[a, b]
-        return total
+    def _tour_length_np(self, tour_arr: np.ndarray) -> float:
+        return float(self._dist[tour_arr, np.roll(tour_arr, -1)].sum())
 
     def _tour_fitness(self, tour: tuple[int, ...]) -> float:
-        return -self._tour_length(tour)
+        return -self._tour_length_np(np.asarray(tour, dtype=np.intp))
 
     def _random_tour(self) -> tuple[int, ...]:
         rest = list(range(1, self._n))
@@ -97,23 +93,32 @@ class TSPLIBSearchSpace:
         return tour[: i + 1] + tour[j : i : -1] + tour[j + 1 :]
 
     def _hill_climb_tour(self, tour: tuple[int, ...]) -> tuple[int, ...]:
-        current = tour
-        current_fit = self._tour_fitness(current)
+        """Best-improvement 2-opt with O(1) delta evaluation per move."""
+        t = list(tour)
+        n = self._n
+        d = self._dist
+        length = float(self._dist[np.asarray(t, dtype=np.intp),
+                                   np.roll(np.asarray(t, dtype=np.intp), -1)].sum())
         improved = True
         while improved:
             improved = False
-            best_nbr = current
-            best_fit = current_fit
+            best_delta = 0.0
+            best_i = best_j = -1
             for i, j in self._moves:
-                nbr = self._apply_2opt(current, i, j)
-                f = self._tour_fitness(nbr)
-                if f > best_fit:
-                    best_fit = f
-                    best_nbr = nbr
-                    improved = True
-            current = best_nbr
-            current_fit = best_fit
-        return current
+                ci, cj = t[i], t[j]
+                ci1 = t[(i + 1) % n]
+                cj1 = t[(j + 1) % n]
+                old = d[ci, ci1] + d[cj, cj1]
+                new = d[ci, cj] + d[ci1, cj1]
+                delta = new - old
+                if delta < best_delta:
+                    best_delta = delta
+                    best_i, best_j = i, j
+            if best_i >= 0:
+                t[best_i + 1 : best_j + 1] = t[best_i + 1 : best_j + 1][::-1]
+                length += best_delta
+                improved = True
+        return tuple(t)
 
     @property
     def fitnesses(self) -> np.ndarray:

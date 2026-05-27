@@ -77,24 +77,35 @@ class QAPLIBSearchSpace:
     def _perm_fitness(self, perm: tuple[int, ...]) -> float:
         return -self._perm_cost(perm)
 
+    def _swap_delta(self, p: list[int], r: int, s: int) -> float:
+        """O(n) delta for swapping positions r and s in permutation p."""
+        n = self._n
+        d, f = self._dist, self._flow
+        pr, ps = p[r], p[s]
+        delta = 0.0
+        for k in range(n):
+            if k == r or k == s:
+                continue
+            pk = p[k]
+            delta += (d[r, k] - d[s, k]) * (f[ps, pk] - f[pr, pk])
+            delta += (d[k, r] - d[k, s]) * (f[pk, ps] - f[pk, pr])
+        delta += (d[r, s] - d[s, r]) * (f[ps, pr] - f[pr, ps])
+        return delta
+
     def _hill_climb_perm(self, perm: tuple[int, ...]) -> tuple[int, ...]:
-        current = perm
-        current_fit = self._perm_fitness(current)
+        """Best-improvement swap with O(n) delta evaluation per move."""
+        p = list(perm)
         improved = True
         while improved:
             improved = False
-            best = current
-            best_fit = current_fit
-            pl = list(current)
-            for i, j in self._swap_pairs:
-                pl[i], pl[j] = pl[j], pl[i]
-                nbr = tuple(pl)
-                f = self._perm_fitness(nbr)
-                pl[i], pl[j] = pl[j], pl[i]
-                if f > best_fit:
-                    best_fit = f
-                    best = nbr
-                    improved = True
-            current = best
-            current_fit = best_fit
-        return current
+            best_delta = 0.0
+            best_r = best_s = -1
+            for r, s in self._swap_pairs:
+                delta = self._swap_delta(p, r, s)
+                if delta < best_delta:
+                    best_delta = delta
+                    best_r, best_s = r, s
+            if best_r >= 0:
+                p[best_r], p[best_s] = p[best_s], p[best_r]
+                improved = True
+        return tuple(p)
