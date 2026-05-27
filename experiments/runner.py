@@ -37,6 +37,14 @@ def _sweep_instances(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+def _collect_with_attractor(space, inst_cfg):
+    """Collect optima and attractor array for GPU OTG construction."""
+    result = collect_optima(space, inst_cfg, return_attractor=True)
+    if isinstance(result, tuple):
+        return result
+    return result, None
+
+
 def run_escape(cfg: dict[str, Any], output_dir: Path) -> None:
     rows = []
     use_gpu = cfg.get("use_gpu", False)
@@ -44,7 +52,7 @@ def run_escape(cfg: dict[str, Any], output_dir: Path) -> None:
         t0 = time.time()
         space = make_space(spec, use_gpu=use_gpu)
         inst_cfg = {**spec, "use_gpu": use_gpu, "optima_mode": spec.get("optima_mode", cfg.get("optima_mode", "enumerate"))}
-        optima = collect_optima(space, inst_cfg)
+        optima, attractor = _collect_with_attractor(space, inst_cfg)
         row = {
             "type": spec["type"],
             "seed": spec.get("seed", 0),
@@ -58,6 +66,8 @@ def run_escape(cfg: dict[str, Any], output_dir: Path) -> None:
                 strat,
                 gamma=cfg.get("gamma", 1.0),
                 n_random_trials=cfg.get("n_random_trials", 30),
+                use_gpu=use_gpu,
+                attractor=attractor,
             )
             row[f"escape_{strat}_pct"] = er["escape_pct"]
         if "orc" in cfg.get("strategies", []) and "mingap" in cfg.get("strategies", []):
@@ -75,8 +85,11 @@ def run_otg_lon(cfg: dict[str, Any], output_dir: Path) -> None:
     for spec in _sweep_instances(cfg):
         space = make_space(spec, use_gpu=use_gpu)
         inst_cfg = {**spec, "use_gpu": use_gpu, "optima_mode": spec.get("optima_mode", cfg.get("optima_mode", "enumerate"))}
-        optima = collect_optima(space, inst_cfg)
-        m = otg_lon_metrics(space, optima, gamma=cfg.get("gamma", 1.0))
+        optima, attractor = _collect_with_attractor(space, inst_cfg)
+        m = otg_lon_metrics(
+            space, optima, gamma=cfg.get("gamma", 1.0),
+            use_gpu=use_gpu, attractor=attractor,
+        )
         row = {"type": spec["type"], "seed": spec.get("seed", 0), **m}
         for k in ("n", "k", "nu", "instance"):
             if k in spec:
@@ -136,8 +149,11 @@ def run_otg_features(cfg: dict[str, Any], output_dir: Path) -> None:
     for spec in _sweep_instances(cfg):
         space = make_space(spec, use_gpu=use_gpu)
         inst_cfg = {**spec, "use_gpu": use_gpu, "optima_mode": spec.get("optima_mode", cfg.get("optima_mode", "enumerate"))}
-        optima = collect_optima(space, inst_cfg)
-        otg = build_otg(space, optima, gamma=cfg.get("gamma", 1.0))
+        optima, attractor = _collect_with_attractor(space, inst_cfg)
+        otg = build_otg(
+            space, optima, gamma=cfg.get("gamma", 1.0),
+            attractor=attractor, use_gpu=use_gpu,
+        )
         cycle_frac = sum(1 for f in otg.funnels if f.is_cycle) / max(len(otg.funnels), 1)
         kappas = []
         for i in range(len(optima)):

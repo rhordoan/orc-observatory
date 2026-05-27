@@ -1,7 +1,7 @@
 # Experiment D: fitness-shuffle ablation (binary landscapes)
 experiments:
   - shuffle
-use_gpu: false
+use_gpu: true
 n_shuffles: 5
 optima_mode: enumerate
 grid:

@@ -3,7 +3,7 @@ experiments:
   - escape
   - otg_lon
   - shuffle
-use_gpu: false
+use_gpu: true
 gamma: 1.0
 strategies: [orc, mingap, random]
 n_shuffles: 5

@@ -32,6 +32,8 @@ def escape_rate(
     gamma: float = 1.0,
     n_random_trials: int = 30,
     rng: np.random.Generator | None = None,
+    use_gpu: bool = False,
+    attractor: np.ndarray | None = None,
 ) -> dict[str, float]:
     """Fraction of optima where one perturbation + HC reaches a better optimum.
 
@@ -47,7 +49,8 @@ def escape_rate(
         return {"escape_pct": 0.0, "n_optima": 0}
 
     if strategy == "orc":
-        return _orc_escape_via_otg(space, optima, gamma, global_best)
+        return _orc_escape_via_otg(space, optima, gamma, global_best,
+                                    use_gpu=use_gpu, attractor=attractor)
 
     successes = 0.0
     for opt in optima:
@@ -86,9 +89,12 @@ def _orc_escape_via_otg(
     optima: list[LocalOptimum],
     gamma: float,
     global_best: float,
+    use_gpu: bool = False,
+    attractor: np.ndarray | None = None,
 ) -> dict[str, float]:
     """ORC escape rate using full OTG resolution (Algorithm 1 with fallback)."""
-    otg = build_otg(space, optima, gamma=gamma)
+    otg = build_otg(space, optima, gamma=gamma,
+                     use_gpu=use_gpu, attractor=attractor)
     n = len(optima)
     successes = 0
     eligible = 0
@@ -113,9 +119,12 @@ def otg_lon_metrics(
     space: SearchSpace,
     optima: list[LocalOptimum],
     gamma: float = 1.0,
+    use_gpu: bool = False,
+    attractor: np.ndarray | None = None,
 ) -> dict[str, float]:
     """Structural metrics for OTG and LON-d1."""
-    otg = build_otg(space, optima, gamma=gamma)
+    otg = build_otg(space, optima, gamma=gamma,
+                     use_gpu=use_gpu, attractor=attractor)
     lon = build_lon_d1(space, optima)
     n = len(optima)
     return {

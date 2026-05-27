@@ -2,7 +2,7 @@
 experiments:
   - ils
   - otg_features
-use_gpu: false
+use_gpu: true
 budget: 5000
 n_trials: 15
 algorithms:

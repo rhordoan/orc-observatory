@@ -98,6 +98,8 @@ def build_otg(
     gamma: float = 1.0,
     on_edge: callable = None,
     on_computing: callable = None,
+    attractor: np.ndarray | None = None,
+    use_gpu: bool = False,
 ) -> OTGResult:
     """Build the ORC Transition Graph over the given local optima.
 
@@ -111,6 +113,16 @@ def build_otg(
     Returns:
         OTGResult with edges, funnels, and structural metrics.
     """
+    # ── GPU fast path for bit-flip spaces with attractor array ───────
+    if (
+        use_gpu
+        and attractor is not None
+        and on_edge is None
+        and hasattr(space, "fitnesses")
+        and not hasattr(space, "neighbor_table")
+    ):
+        return _build_otg_gpu(space, optima, gamma, attractor)
+
     opt_idx_map = {o.idx: i for i, o in enumerate(optima)}
     n = len(optima)
 
@@ -251,3 +263,75 @@ def _compute_dag_depth(successor: np.ndarray, funnels: list[Funnel]) -> int:
         max_depth = max(max_depth, depth)
 
     return max_depth
+
+
+# ── GPU-accelerated OTG build ────────────────────────────────────────────
+
+def _build_otg_gpu(
+    space,
+    optima: list[LocalOptimum],
+    gamma: float,
+    attractor_arr: np.ndarray,
+) -> OTGResult:
+    """Full GPU pipeline: batch sorted-matching ORC + attractor lookup."""
+    from .gpu_orc import gpu_orc_bitflip, gpu_build_otg_edges
+
+    n = len(optima)
+    n_bits = space.degree
+    optima_indices = np.array([o.idx for o in optima], dtype=np.int64)
+
+    orc_matrix = gpu_orc_bitflip(space.fitnesses, optima_indices, n_bits, gamma)
+
+    targets, kappas, via = gpu_build_otg_edges(
+        orc_matrix, optima_indices, attractor_arr, n_bits,
+    )
+
+    edges: list[OTGEdge] = []
+    orc_values: dict[int, dict[int, float]] = {}
+    successor = np.full(n, -1, dtype=np.intp)
+
+    for i in range(n):
+        x = int(optima_indices[i])
+        edge = OTGEdge(
+            source=i,
+            target=int(targets[i]) if targets[i] >= 0 else i,
+            min_kappa=float(kappas[i]),
+            via_neighbor=int(via[i]),
+        )
+        edges.append(edge)
+        successor[i] = edge.target
+
+        orc_dict = {}
+        for b in range(n_bits):
+            orc_dict[x ^ (1 << b)] = float(orc_matrix[i, b])
+        orc_values[i] = orc_dict
+
+    funnels = _detect_funnels(successor, optima)
+    has_cycles = any(f.is_cycle for f in funnels)
+
+    compression = len(funnels) / n if n > 0 else 1.0
+
+    fitness_sorted = sorted(range(n), key=lambda i: optima[i].fitness, reverse=True)
+    rank_map = {idx: rank for rank, idx in enumerate(fitness_sorted)}
+    attractor_ranks = [rank_map[f.attractor_idx] / max(n - 1, 1) for f in funnels]
+    mean_rank = float(np.mean(attractor_ranks)) if attractor_ranks else 0.5
+
+    top5_threshold = max(1, int(0.05 * n))
+    top5_set = set(fitness_sorted[:top5_threshold])
+    top5_reach = sum(
+        1 for f in funnels if f.attractor_idx in top5_set
+    ) / max(len(funnels), 1)
+
+    dag_depth = _compute_dag_depth(successor, funnels)
+
+    return OTGResult(
+        optima=optima,
+        edges=edges,
+        funnels=funnels,
+        orc_values=orc_values,
+        compression_ratio=compression,
+        mean_terminal_rank=mean_rank,
+        top5_reachability=top5_reach,
+        dag_depth=dag_depth,
+        has_cycles=has_cycles,
+    )

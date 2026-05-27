@@ -44,7 +44,9 @@ def hill_climb(space: SearchSpace, start: int) -> int:
         current = best_nbr
 
 
-def enumerate_local_optima(space: SearchSpace, use_gpu: bool = False) -> list[LocalOptimum]:
+def enumerate_local_optima(
+    space: SearchSpace, use_gpu: bool = False, return_attractor: bool = False,
+) -> list[LocalOptimum] | tuple[list[LocalOptimum], np.ndarray]:
     """Exhaustive enumeration: hill-climb from every solution.
 
     When *use_gpu* is True (and a CUDA GPU is available), fitness
@@ -52,7 +54,10 @@ def enumerate_local_optima(space: SearchSpace, use_gpu: bool = False) -> list[Lo
     Otherwise falls back to vectorized NumPy or plain Python loops.
 
     Returns local optima sorted by fitness (descending).
+    If *return_attractor* is True, also returns the attractor array
+    (solution_idx -> local_optimum_idx) for GPU OTG construction.
     """
+    attractor = None
     if use_gpu or space.size > 2**14:
         try:
             if hasattr(space, "neighbor_table"):
@@ -63,26 +68,29 @@ def enumerate_local_optima(space: SearchSpace, use_gpu: bool = False) -> list[Lo
             else:
                 from .gpu_accel import gpu_enumerate_optima
                 attractor = gpu_enumerate_optima(space.fitnesses, space.degree)
-            return _basins_from_attractor(attractor, space)
         except Exception:
-            pass
+            attractor = None
 
-    attractor = np.full(space.size, -1, dtype=np.intp)
-    for s in range(space.size):
-        if attractor[s] == -1:
-            path = []
-            current = s
-            while attractor[current] == -1:
-                path.append(current)
-                attractor[current] = -2  # mark as visiting
-                current = hill_climb(space, current)
-                if current in path:
-                    break
-            opt = current
-            for node in path:
-                attractor[node] = opt
+    if attractor is None:
+        attractor = np.full(space.size, -1, dtype=np.intp)
+        for s in range(space.size):
+            if attractor[s] == -1:
+                path = []
+                current = s
+                while attractor[current] == -1:
+                    path.append(current)
+                    attractor[current] = -2
+                    current = hill_climb(space, current)
+                    if current in path:
+                        break
+                opt = current
+                for node in path:
+                    attractor[node] = opt
 
-    return _basins_from_attractor(attractor, space)
+    optima = _basins_from_attractor(attractor, space)
+    if return_attractor:
+        return optima, attractor
+    return optima
 
 
 def _basins_from_attractor(attractor: np.ndarray, space: SearchSpace) -> list[LocalOptimum]:

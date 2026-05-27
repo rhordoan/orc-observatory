@@ -86,24 +86,37 @@ def make_space(spec: dict[str, Any], use_gpu: bool = False) -> SearchSpace:
     raise ValueError(f"Unknown space type: {kind}")
 
 
-def collect_optima(space: SearchSpace, cfg: dict[str, Any]) -> list:
-    """Enumerate or sample local optima per config."""
+def collect_optima(
+    space: SearchSpace, cfg: dict[str, Any], return_attractor: bool = False,
+):
+    """Enumerate or sample local optima per config.
+
+    When *return_attractor* is True (and enumeration is used), returns
+    (optima, attractor_array) for GPU OTG construction.
+    """
     from lib.hill_climb import LocalOptimum, enumerate_local_optima, random_restart_optima
 
     kind = cfg.get("type", "")
     if kind in ("tsplib", "qaplib"):
-        return [
+        optima = [
             LocalOptimum(idx=i, fitness=space.fitness(i), basin=[i])
             for i in range(space.size)
         ]
+        return (optima, None) if return_attractor else optima
 
     mode = cfg.get("optima_mode", "enumerate")
     if mode == "enumerate":
-        return enumerate_local_optima(space, use_gpu=cfg.get("use_gpu", False))
+        result = enumerate_local_optima(
+            space,
+            use_gpu=cfg.get("use_gpu", False),
+            return_attractor=return_attractor,
+        )
+        return result
     n_restarts = int(cfg.get("n_restarts", 1000))
-    return random_restart_optima(
+    optima = random_restart_optima(
         space, n_restarts=n_restarts, seed=cfg.get("seed")
     )
+    return (optima, None) if return_attractor else optima
 
 
 def write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str] | None = None) -> None:
