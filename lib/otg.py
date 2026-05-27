@@ -16,7 +16,7 @@ import numpy as np
 
 from .search_spaces.protocol import SearchSpace
 from .hill_climb import LocalOptimum, hill_climb
-from .orc import compute_all_orc, min_orc_neighbor
+from .orc import compute_all_orc, min_orc_neighbor, batch_orc_gpu
 
 
 @dataclass
@@ -141,6 +141,12 @@ def build_otg(
             successor[i] = edge.target
             edges.append(edge)
             on_edge(edge)
+    elif space.degree > 30 and hasattr(space, "neighbor_table"):
+        optima_idx_arr = np.array([o.idx for o in optima], dtype=np.int64)
+        orc_values = batch_orc_gpu(
+            space, optima_idx_arr, gamma,
+            max_neighbors=max_nbrs or space.degree,
+        )
     else:
         n_workers = min(os.cpu_count() or 4, n, 8)
         if n_workers > 1 and n > 4:
