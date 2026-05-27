@@ -137,7 +137,7 @@ def compute_all_orc(
 
     Returns {neighbor_idx: kappa_value} dict.
     """
-    if hasattr(space, "fitnesses") and not hasattr(space, "neighbor_table"):
+    if not hasattr(space, "neighbor_table") and hasattr(space, "fitnesses"):
         return _compute_all_orc_sorted(space, x, gamma)
     nbrs = space.neighbors(x)
     if max_neighbors is not None and len(nbrs) > max_neighbors:
