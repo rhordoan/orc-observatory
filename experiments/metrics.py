@@ -62,15 +62,9 @@ def escape_rate(
 
         if strategy == "orc":
             all_orc = orc_cache[i]
-            ranked = sorted(all_orc, key=all_orc.get)
-            best_dest_fit = opt.fitness
-            for candidate in ranked:
-                dest = hill_climb(space, candidate)
-                dest_fit = space.fitness(dest)
-                if dest_fit > opt.fitness:
-                    best_dest_fit = dest_fit
-                    break
-            if best_dest_fit > opt.fitness:
+            best_nbr = min(all_orc, key=all_orc.get)
+            dest = hill_climb(space, best_nbr)
+            if space.fitness(dest) > opt.fitness:
                 successes += 1
         elif strategy == "mingap":
             y = min_gap_neighbor(space, opt.idx)
