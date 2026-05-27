@@ -147,6 +147,10 @@ def build_otg(
             space, optima_idx_arr, gamma,
             max_neighbors=max_nbrs or space.degree,
         )
+        for i, opt in enumerate(optima):
+            edge = _resolve_edge(i, optima, orc_values[i], space, opt_idx_map)
+            successor[i] = edge.target
+            edges.append(edge)
     else:
         n_workers = min(os.cpu_count() or 4, n, 8)
         if n_workers > 1 and n > 4:
