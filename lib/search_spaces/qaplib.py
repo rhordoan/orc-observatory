@@ -79,6 +79,16 @@ class QAPLIBSearchSpace:
     def solution_label(self, idx: int) -> str:
         return str(self._perms[idx][: min(8, self._n)])
 
+    def neighbor_fitnesses(self, idx: int) -> np.ndarray:
+        """Fitness of all swap neighbors via O(n) delta per move."""
+        p = list(self._perms[idx])
+        base_cost = -self._fitness_cache[idx]
+        result = np.empty(self._degree, dtype=np.float64)
+        for k, (r, s) in enumerate(self._swap_pairs):
+            delta = self._swap_delta(p, r, s)
+            result[k] = -(base_cost + delta)
+        return result
+
     @property
     def neighbor_table(self):
         return None

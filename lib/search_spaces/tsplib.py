@@ -129,6 +129,21 @@ class TSPLIBSearchSpace:
                 improved = True
         return tuple(t)
 
+    def neighbor_fitnesses(self, idx: int) -> np.ndarray:
+        """Fitness of all neighbors via O(1) delta per move. No tour materialization."""
+        tour = self._tours[idx]
+        n = self._n
+        d = self._dist
+        base_length = -self._fitness_cache[idx]
+        result = np.empty(self._degree, dtype=np.float64)
+        for k, (i, j) in enumerate(self._moves):
+            ci, cj = tour[i], tour[j]
+            ci1 = tour[(i + 1) % n]
+            cj1 = tour[(j + 1) % n]
+            delta = d[ci, cj] + d[ci1, cj1] - d[ci, ci1] - d[cj, cj1]
+            result[k] = -(base_length + delta)
+        return result
+
     @property
     def neighbor_table(self):
         return None

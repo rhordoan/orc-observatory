@@ -217,10 +217,11 @@ def batch_orc_gpu(
     gamma: float = 1.0,
     max_neighbors: int = 60,
 ) -> dict[int, dict[int, float]]:
-    """Batch ORC computation for all optima, GPU-accelerated via CuPy.
+    """Batch ORC for all optima, GPU-accelerated via CuPy.
 
-    Phase 1: Pre-fetch all neighbor arrays and fitness values (CPU).
-    Phase 2: Batch sort + match on GPU.
+    Uses neighbor_fitnesses() (O(1) delta per move) when available to
+    avoid materializing neighbor tour tuples. For N(y)\\{x} exclusion,
+    finds x by matching fitness value f(x). Then batch sort+match on GPU.
     """
     try:
         import cupy as cp
@@ -228,107 +229,92 @@ def batch_orc_gpu(
     except Exception:
         has_gpu = False
 
+    import time as _time
+
     n_opt = len(optima_indices)
     k = space.degree
+    has_delta = hasattr(space, "neighbor_fitnesses")
+    n_excl = k - 1
+    print(f"    batch_orc: {n_opt} optima, degree={k}, max_nbrs={max_neighbors}, delta={has_delta}", flush=True)
+    t0 = _time.time()
 
-    print(f"    batch_orc: {n_opt} optima, degree={k}, max_nbrs={max_neighbors}", flush=True)
-
-    nbr_arrays: dict[int, np.ndarray] = {}
-    selected_nbrs: list[np.ndarray] = []
+    opt_nbr_nodes: list[np.ndarray] = []
+    opt_nbr_fit: list[np.ndarray] = []
+    selected_move_idx: list[np.ndarray] = []
 
     for x in optima_indices:
         x = int(x)
         nbrs = space.neighbors(x)
-        nbr_arrays[x] = nbrs
+        opt_nbr_nodes.append(nbrs)
+        nf = space.neighbor_fitnesses(x) if has_delta else np.array([space.fitness(int(n)) for n in nbrs])
+        opt_nbr_fit.append(nf)
         if k > max_neighbors:
-            fx = space.fitness(x)
-            gaps = np.array([abs(space.fitness(int(n)) - fx) for n in nbrs])
-            top_k = np.argsort(gaps)[:max_neighbors]
-            selected_nbrs.append(nbrs[top_k])
+            gaps = np.abs(nf - space.fitness(x))
+            selected_move_idx.append(np.argsort(gaps)[:max_neighbors])
         else:
-            selected_nbrs.append(nbrs)
+            selected_move_idx.append(np.arange(k))
 
-    unique_ys = set()
-    for sel in selected_nbrs:
-        for y in sel:
-            unique_ys.add(int(y))
-    print(f"    batch_orc: pre-fetching {len(unique_ys)} neighbor arrays...", flush=True)
+    print(f"    batch_orc: optima arrays in {_time.time()-t0:.1f}s", flush=True)
+    t1 = _time.time()
+
+    y_fit_cache: dict[int, np.ndarray] = {}
+    pair_list: list[tuple[int, int, int]] = []
+
+    for i in range(n_opt):
+        nbrs = opt_nbr_nodes[i]
+        for move_idx in selected_move_idx[i]:
+            move_idx = int(move_idx)
+            y_node = int(nbrs[move_idx])
+            pair_list.append((i, y_node, move_idx))
+
+    unique_ys = {y for _, y, _ in pair_list}
+    print(f"    batch_orc: computing {len(unique_ys)} neighbor fitness arrays (delta)...", flush=True)
     for y in unique_ys:
-        if y not in nbr_arrays:
-            nbr_arrays[y] = space.neighbors(y)
+        if y not in y_fit_cache:
+            y_fit_cache[y] = space.neighbor_fitnesses(y) if has_delta else np.array([space.fitness(int(n)) for n in space.neighbors(y)])
 
-    all_nodes: set[int] = set()
-    for arr in nbr_arrays.values():
-        for n in arr:
-            all_nodes.add(int(n))
-    for x in optima_indices:
-        all_nodes.add(int(x))
+    print(f"    batch_orc: neighbor fitness in {_time.time()-t1:.1f}s", flush=True)
+    t2 = _time.time()
 
-    node_list = sorted(all_nodes)
-    node_to_pos = {n: i for i, n in enumerate(node_list)}
-    fit_arr = np.array([space.fitness(n) for n in node_list], dtype=np.float64)
+    total = len(pair_list)
+    fx_block = np.empty((total, n_excl), dtype=np.float64)
+    fy_block = np.empty((total, n_excl), dtype=np.float64)
 
-    m = min(max_neighbors, k)
-    n_excl = k - 1
+    for p, (opt_i, y_node, move_idx) in enumerate(pair_list):
+        fx_block[p] = np.delete(opt_nbr_fit[opt_i], move_idx)[:n_excl]
 
-    total_pairs = n_opt * m
-    fx_block = np.empty((total_pairs, n_excl), dtype=np.float64)
-    fy_block = np.empty((total_pairs, n_excl), dtype=np.float64)
+        fy_full = y_fit_cache[y_node]
+        x_node = int(optima_indices[opt_i])
+        fx_val = space.fitness(x_node)
+        x_pos = int(np.argmin(np.abs(fy_full - fx_val)))
+        fy_block[p] = np.delete(fy_full, x_pos)[:n_excl]
 
-    print(f"    batch_orc: building {total_pairs} fitness blocks...", flush=True)
-    pair_idx = 0
-    pair_map: list[tuple[int, int]] = []
-    for i, x_val in enumerate(optima_indices):
-        x = int(x_val)
-        sel = selected_nbrs[i]
-        nbrs_x_full = nbr_arrays[x]
-        fx_full = fit_arr[[node_to_pos[int(n)] for n in nbrs_x_full]]
+    print(f"    batch_orc: blocks in {_time.time()-t2:.1f}s", flush=True)
+    t3 = _time.time()
 
-        for y_val in sel:
-            y = int(y_val)
-            mask = nbrs_x_full != y
-            fx_excl = fx_full[mask]
-            if len(fx_excl) < n_excl:
-                fx_excl = np.pad(fx_excl, (0, n_excl - len(fx_excl)))
-            fx_block[pair_idx] = fx_excl[:n_excl]
-
-            nbrs_y_full = nbr_arrays[y]
-            fy_full = fit_arr[[node_to_pos[int(n)] for n in nbrs_y_full]]
-            mask_y = nbrs_y_full != x
-            fy_excl = fy_full[mask_y]
-            if len(fy_excl) < n_excl:
-                fy_excl = np.pad(fy_excl, (0, n_excl - len(fy_excl)))
-            fy_block[pair_idx] = fy_excl[:n_excl]
-
-            pair_map.append((i, y))
-            pair_idx += 1
-
-    fx_block = fx_block[:pair_idx]
-    fy_block = fy_block[:pair_idx]
-
-    if has_gpu and pair_idx > 100:
-        print(f"    batch_orc: GPU sort+match on {pair_idx} pairs...", flush=True)
+    if has_gpu and total > 50:
+        print(f"    batch_orc: GPU sort+match {total} pairs...", flush=True)
         fx_g = cp.asarray(fx_block)
         fy_g = cp.asarray(fy_block)
         fx_g.sort(axis=1)
         fy_g.sort(axis=1)
         costs = n_excl * 2.0 + gamma * cp.abs(fx_g - fy_g).sum(axis=1)
-        kappas = 1.0 - costs / (k + 1)
-        kappas_cpu = cp.asnumpy(kappas)
+        kappas_cpu = cp.asnumpy(1.0 - costs / (k + 1))
     else:
-        print(f"    batch_orc: CPU sort+match on {pair_idx} pairs...", flush=True)
+        print(f"    batch_orc: CPU sort+match {total} pairs...", flush=True)
         fx_block.sort(axis=1)
         fy_block.sort(axis=1)
         costs = n_excl * 2.0 + gamma * np.abs(fx_block - fy_block).sum(axis=1)
         kappas_cpu = 1.0 - costs / (k + 1)
 
+    print(f"    batch_orc: sort+match in {_time.time()-t3:.1f}s, total {_time.time()-t0:.1f}s", flush=True)
+
     orc_values: dict[int, dict[int, float]] = {}
-    for p, (opt_i, y) in enumerate(pair_map):
+    for p, (opt_i, y_node, _) in enumerate(pair_list):
         if opt_i not in orc_values:
             orc_values[opt_i] = {}
-        orc_values[opt_i][y] = float(kappas_cpu[p])
+        orc_values[opt_i][y_node] = float(kappas_cpu[p])
 
-    print(f"    batch_orc: done.", flush=True)
     return orc_values
 
 
