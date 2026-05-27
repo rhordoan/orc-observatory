@@ -1,0 +1,20 @@
+# Experiment E: Boltzmann vs ORC+Pert vs Random ILS
+experiments:
+  - ils
+  - otg_features
+use_gpu: false
+budget: 5000
+n_trials: 15
+algorithms:
+  - boltzmann
+  - orc_pert
+  - random
+  - rrhc
+optima_mode: enumerate
+grid:
+  items:
+    - {type: nk, n: 16, k: 4, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: nk, n: 16, k: 8, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: wmodel, n: 16, nu: 3, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: wmodel, n: 16, nu: 4, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: wmodel, n: 16, nu: 6, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}

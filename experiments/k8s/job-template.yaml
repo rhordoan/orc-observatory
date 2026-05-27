@@ -1,0 +1,70 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${JOB_NAME}
+  labels:
+    app: orc-experiments
+    experiment: ${EXPERIMENT_NAME}
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: orc-experiments
+        experiment: ${EXPERIMENT_NAME}
+    spec:
+      nodeSelector:
+        nvidia.com/gpu.product: NVIDIA-H100-80GB-HBM3
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 30
+      initContainers:
+      - name: fix-permissions
+        image: ${IMAGE}
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          runAsUser: 0
+        command: ["/bin/bash", "-c", "mkdir -p /results/${EXPERIMENT_NAME} && chmod -R 777 /results"]
+        volumeMounts:
+        - name: results
+          mountPath: /results
+      containers:
+      - name: orc-runner
+        image: ${IMAGE}
+        imagePullPolicy: IfNotPresent
+        command:
+          - python3
+          - -m
+          - experiments.runner
+          - --config
+          - /app/experiments/configs/${CONFIG_FILE}
+          - --output
+          - /results/${EXPERIMENT_NAME}
+        env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: OMP_NUM_THREADS
+          value: "8"
+        - name: MKL_NUM_THREADS
+          value: "8"
+        resources:
+          requests:
+            cpu: "8"
+            memory: 32Gi
+            nvidia.com/gpu: 1
+          limits:
+            cpu: "8"
+            memory: 32Gi
+            nvidia.com/gpu: 1
+        volumeMounts:
+        - name: results
+          mountPath: /results
+        - name: dshm
+          mountPath: /dev/shm
+      volumes:
+      - name: results
+        persistentVolumeClaim:
+          claimName: orc-experiment-results
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 16Gi

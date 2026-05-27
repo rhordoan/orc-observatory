@@ -1,0 +1,14 @@
+# Experiment B: N=20/22 full enumeration on GPU
+experiments:
+  - escape
+  - otg_lon
+use_gpu: true
+gamma: 1.0
+strategies: [orc, mingap, random]
+optima_mode: enumerate
+grid:
+  items:
+    - {type: nk, n: 20, k: 4, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: nk, n: 20, k: 8, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: wmodel, n: 20, nu: 3, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: wmodel, n: 20, nu: 4, seeds: [0,1,2,3,4,5,6,7,8,9]}

@@ -1,0 +1,30 @@
+# Experiment A: reproduce thesis N=16 results
+experiments:
+  - escape
+  - otg_lon
+  - ils
+  - otg_features
+use_gpu: false
+gamma: 1.0
+strategies:
+  - orc
+  - mingap
+  - random
+n_random_trials: 30
+budget: 5000
+n_trials: 10
+algorithms:
+  - orc_pert
+  - random
+  - rrhc
+  - orc_only
+  - mingap
+  - boltzmann
+grid:
+  items:
+    - {type: nk, n: 16, k: 4, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29]}
+    - {type: nk, n: 16, k: 8, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29]}
+    - {type: nk, n: 16, k: 12, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29]}
+    - {type: wmodel, n: 16, nu: 3, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29]}
+    - {type: wmodel, n: 16, nu: 4, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29]}
+    - {type: wmodel, n: 16, nu: 6, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29]}

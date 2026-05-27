@@ -1,0 +1,11 @@
+# Experiment D: fitness-shuffle ablation (binary landscapes)
+experiments:
+  - shuffle
+use_gpu: false
+n_shuffles: 5
+optima_mode: enumerate
+grid:
+  items:
+    - {type: nk, n: 16, k: 4, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: wmodel, n: 16, nu: 3, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: wmodel, n: 16, nu: 4, seeds: [0,1,2,3,4,5,6,7,8,9]}

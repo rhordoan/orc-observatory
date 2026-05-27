@@ -79,3 +79,50 @@ def build_lon_d1(
         n_self_loops=n_self_loops,
         singleton_fraction=singleton_frac,
     )
+
+
+def build_lon_d3(
+    space: SearchSpace,
+    optima: list[LocalOptimum],
+    d: int = 3,
+    n_trials: int = 100,
+    seed: int | None = None,
+) -> LONResult:
+    """LON-d3: mode destination over random d-bit (or d-move) perturbations."""
+    import numpy as np
+
+    rng = np.random.default_rng(seed)
+    opt_idx_map = {o.idx: i for i, o in enumerate(optima)}
+    edges: list[LONEdge] = []
+    n_self_loops = 0
+    n = len(optima)
+
+    for i, opt in enumerate(optima):
+        counts: dict[int, int] = {}
+        for _ in range(n_trials):
+            current = opt.idx
+            for _ in range(d):
+                nbrs = space.neighbors(current)
+                current = int(rng.choice(nbrs))
+            dest = hill_climb(space, current)
+            dest_i = opt_idx_map.get(dest, i)
+            counts[dest_i] = counts.get(dest_i, 0) + 1
+        dest_idx = max(counts, key=counts.get)
+        if dest_idx == i:
+            n_self_loops += 1
+        edges.append(
+            LONEdge(
+                source=i,
+                target=dest_idx,
+                via_neighbor=-1,
+                neighbor_fitness=0.0,
+            )
+        )
+
+    singleton_frac = n_self_loops / n if n > 0 else 1.0
+    return LONResult(
+        optima=optima,
+        edges=edges,
+        n_self_loops=n_self_loops,
+        singleton_fraction=singleton_frac,
+    )

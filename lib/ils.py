@@ -13,8 +13,7 @@ from typing import Generator
 import numpy as np
 
 from .search_spaces.protocol import SearchSpace
-from .orc import compute_all_orc
-from .hill_climb import hill_climb
+from .orc import compute_all_orc, min_orc_neighbor
 
 
 @dataclass
@@ -183,3 +182,73 @@ def random_restart_hc(
 
         yield ILSEvent(algo="rrhc", evals=cs.eval_count,
                        best_fitness=best_fit, current_optimum=opt)
+
+
+def _min_gap_neighbor(space: SearchSpace, x: int) -> int:
+    nbrs = space.neighbors(x)
+    fx = space.fitness(x)
+    best = int(nbrs[0])
+    best_gap = abs(space.fitness(best) - fx)
+    for n in nbrs[1:]:
+        g = abs(space.fitness(int(n)) - fx)
+        if g < best_gap:
+            best_gap = g
+            best = int(n)
+    return best
+
+
+def orc_only_ils(
+    space: SearchSpace,
+    budget: int = 5000,
+    gamma: float = 1.0,
+    seed: int | None = None,
+) -> Generator[ILSEvent, None, None]:
+    """ORC-ILS ablation: only the min-kappa directed bit (no random diversification)."""
+    rng = np.random.default_rng(seed)
+    cs = CountingSpace(space)
+
+    start = int(rng.integers(0, cs.size))
+    x_star = _hill_climb_counted(cs, start)
+    best = x_star
+    best_fit = cs.fitness(best)
+
+    yield ILSEvent(algo="orc_only", evals=cs.eval_count,
+                   best_fitness=best_fit, current_optimum=x_star)
+
+    while cs.eval_count < budget:
+        y_star, _ = min_orc_neighbor(space, x_star, gamma)
+        x_star = _hill_climb_counted(cs, y_star)
+        f = cs.fitness(x_star)
+        if f > best_fit:
+            best_fit = f
+            best = x_star
+        yield ILSEvent(algo="orc_only", evals=cs.eval_count,
+                       best_fitness=best_fit, current_optimum=x_star)
+
+
+def mingap_ils(
+    space: SearchSpace,
+    budget: int = 5000,
+    seed: int | None = None,
+) -> Generator[ILSEvent, None, None]:
+    """MG-ILS ablation: single MinGap-directed bit per iteration."""
+    rng = np.random.default_rng(seed)
+    cs = CountingSpace(space)
+
+    start = int(rng.integers(0, cs.size))
+    x_star = _hill_climb_counted(cs, start)
+    best = x_star
+    best_fit = cs.fitness(best)
+
+    yield ILSEvent(algo="mingap", evals=cs.eval_count,
+                   best_fitness=best_fit, current_optimum=x_star)
+
+    while cs.eval_count < budget:
+        y_star = _min_gap_neighbor(space, x_star)
+        x_star = _hill_climb_counted(cs, y_star)
+        f = cs.fitness(x_star)
+        if f > best_fit:
+            best_fit = f
+            best = x_star
+        yield ILSEvent(algo="mingap", evals=cs.eval_count,
+                       best_fitness=best_fit, current_optimum=x_star)
