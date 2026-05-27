@@ -49,10 +49,11 @@ spec:
             cupy-cuda12x numba
 
           echo "=== Exp A & B: already complete on PVC ==="
+          echo "=== Exp C escape+otg_lon: already complete on PVC ==="
 
-          echo "=== Exp C: Structured instances ==="
+          echo "=== Exp C: Shuffle ablation (remaining) ==="
           python3 -m experiments.runner \
-            --config experiments/configs/exp_c_structured.yaml \
+            --config experiments/configs/exp_c_shuffle_only.yaml \
             --output /results/exp-c
 
           echo "=== Exp D: Fitness-shuffle ablation ==="
