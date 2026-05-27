@@ -48,16 +48,31 @@ def escape_rate(
     if n == 0:
         return {"escape_pct": 0.0, "n_optima": 0}
 
-    if strategy == "orc":
-        return _orc_escape_via_otg(space, optima, gamma, global_best,
-                                    use_gpu=use_gpu, attractor=attractor)
-
     successes = 0.0
-    for opt in optima:
+    eligible = 0
+
+    orc_cache: dict[int, dict[int, float]] | None = None
+    if strategy == "orc":
+        orc_cache = _precompute_orc(space, optima, gamma, use_gpu, attractor)
+
+    for i, opt in enumerate(optima):
         if opt.fitness >= global_best - 1e-12:
             continue
+        eligible += 1
 
-        if strategy == "mingap":
+        if strategy == "orc":
+            all_orc = orc_cache[i]
+            ranked = sorted(all_orc, key=all_orc.get)
+            best_dest_fit = opt.fitness
+            for candidate in ranked:
+                dest = hill_climb(space, candidate)
+                dest_fit = space.fitness(dest)
+                if dest_fit > opt.fitness:
+                    best_dest_fit = dest_fit
+                    break
+            if best_dest_fit > opt.fitness:
+                successes += 1
+        elif strategy == "mingap":
             y = min_gap_neighbor(space, opt.idx)
             dest = hill_climb(space, y)
             if space.fitness(dest) > opt.fitness:
@@ -74,7 +89,6 @@ def escape_rate(
         else:
             raise ValueError(strategy)
 
-    eligible = sum(1 for o in optima if o.fitness < global_best - 1e-12)
     pct = 100.0 * successes / max(eligible, 1)
     return {
         "escape_pct": pct,
@@ -84,35 +98,29 @@ def escape_rate(
     }
 
 
-def _orc_escape_via_otg(
+def _precompute_orc(
     space: SearchSpace,
     optima: list[LocalOptimum],
     gamma: float,
-    global_best: float,
     use_gpu: bool = False,
     attractor: np.ndarray | None = None,
-) -> dict[str, float]:
-    """ORC escape rate using full OTG resolution (Algorithm 1 with fallback)."""
-    otg = build_otg(space, optima, gamma=gamma,
-                     use_gpu=use_gpu, attractor=attractor)
-    n = len(optima)
-    successes = 0
-    eligible = 0
-    for edge in otg.edges:
-        src_fit = optima[edge.source].fitness
-        if src_fit >= global_best - 1e-12:
-            continue
-        eligible += 1
-        tgt_fit = optima[edge.target].fitness
-        if tgt_fit > src_fit:
-            successes += 1
-    pct = 100.0 * successes / max(eligible, 1)
-    return {
-        "escape_pct": pct,
-        "n_optima": n,
-        "n_eligible": eligible,
-        "n_success": successes,
-    }
+) -> dict[int, dict[int, float]]:
+    """Batch-compute ORC values for all optima, reusing the GPU path when possible."""
+    from lib.orc import compute_all_orc, batch_orc_gpu
+
+    max_nbrs = 60 if space.degree > 100 else None
+
+    if space.degree > 30 and hasattr(space, "neighbor_table"):
+        optima_idx_arr = np.array([o.idx for o in optima], dtype=np.int64)
+        return batch_orc_gpu(
+            space, optima_idx_arr, gamma,
+            max_neighbors=max_nbrs or space.degree,
+        )
+
+    orc_values: dict[int, dict[int, float]] = {}
+    for i, opt in enumerate(optima):
+        orc_values[i] = compute_all_orc(space, opt.idx, gamma, max_neighbors=max_nbrs)
+    return orc_values
 
 
 def otg_lon_metrics(
