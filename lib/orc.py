@@ -141,10 +141,24 @@ def compute_all_orc(
 ) -> dict[int, float]:
     """Compute ORC from node x to all its neighbors.
 
+    Uses sorted matching (O(k log k) per edge) for bit-flip spaces with
+    precomputed fitness arrays; falls back to Hungarian otherwise.
+
     Returns {neighbor_idx: kappa_value} dict.
     """
+    if hasattr(space, "fitnesses") and not hasattr(space, "neighbor_table"):
+        return _compute_all_orc_sorted(space, x, gamma)
     nbrs = space.neighbors(x)
     return {int(y): compute_orc(space, x, y, gamma) for y in nbrs}
+
+
+def _compute_all_orc_sorted(space, x: int, gamma: float) -> dict[int, float]:
+    """Vectorized sorted-matching ORC for a single node on bit-flip graphs."""
+    from .gpu_orc import cpu_orc_bitflip_sorted
+    n_bits = space.degree
+    idx_arr = np.array([x], dtype=np.int64)
+    orc_row = cpu_orc_bitflip_sorted(space.fitnesses, idx_arr, n_bits, gamma)
+    return {x ^ (1 << b): float(orc_row[0, b]) for b in range(n_bits)}
 
 
 def min_orc_neighbor(

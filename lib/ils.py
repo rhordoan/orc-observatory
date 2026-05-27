@@ -50,6 +50,10 @@ class CountingSpace:
     def degree(self) -> int:
         return self._space.degree
 
+    @property
+    def fitnesses(self):
+        return getattr(self._space, "fitnesses", None)
+
     def fitness(self, idx: int) -> float:
         self.eval_count += 1
         return self._space.fitness(idx)
@@ -61,8 +65,44 @@ class CountingSpace:
         return self._space.solution_label(idx)
 
 
+_BITFLIP_MASKS: dict[int, np.ndarray] = {}
+
+
+def _get_masks(n_bits: int) -> np.ndarray:
+    """Cached one-hot bit masks for vectorized neighbor generation."""
+    if n_bits not in _BITFLIP_MASKS:
+        _BITFLIP_MASKS[n_bits] = np.int64(1) << np.arange(n_bits, dtype=np.int64)
+    return _BITFLIP_MASKS[n_bits]
+
+
+def _hill_climb_vec(fitnesses: np.ndarray, n_bits: int, start: int) -> tuple[int, int]:
+    """Vectorized best-improvement hill climbing. Returns (optimum, n_evals)."""
+    masks = _get_masks(n_bits)
+    current = np.int64(start)
+    current_fit = fitnesses[current]
+    evals = 1
+    while True:
+        neighbors = current ^ masks
+        fits = fitnesses[neighbors]
+        evals += n_bits
+        best_idx = fits.argmax()
+        if fits[best_idx] <= current_fit:
+            return int(current), evals
+        current = neighbors[best_idx]
+        current_fit = fits[best_idx]
+
+
 def _hill_climb_counted(cs: CountingSpace, start: int) -> int:
-    """Best-improvement hill climbing using the counting wrapper."""
+    """Best-improvement hill climbing using the counting wrapper.
+
+    Uses vectorized NumPy path for bit-flip spaces; falls back to
+    scalar Python loop for general (TSP/QAP) spaces.
+    """
+    f = cs.fitnesses
+    if f is not None and not hasattr(cs._space, "neighbor_table"):
+        opt, n_evals = _hill_climb_vec(f, cs.degree, start)
+        cs.eval_count += n_evals
+        return opt
     current = start
     while True:
         nbrs = cs.neighbors(current)
@@ -185,6 +225,12 @@ def random_restart_hc(
 
 
 def _min_gap_neighbor(space: SearchSpace, x: int) -> int:
+    f = getattr(space, "fitnesses", None)
+    if f is not None and not hasattr(space, "neighbor_table"):
+        masks = _get_masks(space.degree)
+        neighbors = x ^ masks
+        gaps = np.abs(f[neighbors] - f[x])
+        return int(neighbors[gaps.argmin()])
     nbrs = space.neighbors(x)
     fx = space.fitness(x)
     best = int(nbrs[0])
