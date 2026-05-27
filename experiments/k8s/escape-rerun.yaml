@@ -1,0 +1,75 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: orc-escape-rerun
+  namespace: runai-romania-dev
+  labels:
+    app: orc-experiments
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app: orc-experiments
+    spec:
+      nodeSelector:
+        nvidia.com/gpu.product: NVIDIA-H100-80GB-HBM3
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 60
+      containers:
+      - name: orc-runner
+        image: nvidia/cuda:12.4.0-devel-ubuntu22.04
+        imagePullPolicy: IfNotPresent
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -ex
+          apt-get update && apt-get install -y --no-install-recommends python3 python3-pip python3-venv git
+          cd /workspace
+          git clone https://github.com/rhordoan/orc-observatory.git repo
+          cd repo
+          pip3 install --no-cache-dir \
+            -r requirements.txt \
+            -r experiments/requirements-experiments.txt \
+            cupy-cuda12x numba
+
+          echo "=== Exp C escape rerun (fitness-based measurement) ==="
+          python3 -m experiments.runner \
+            --config experiments/configs/exp_c_escape_rerun.yaml \
+            --output /results/exp-c-rerun
+
+          echo "=== ESCAPE RERUN COMPLETE ==="
+          cat /results/exp-c-rerun/escape_rates.csv
+        env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: DEBIAN_FRONTEND
+          value: "noninteractive"
+        resources:
+          requests:
+            cpu: "16"
+            memory: 64Gi
+            nvidia.com/gpu: 1
+          limits:
+            cpu: "16"
+            memory: 64Gi
+            nvidia.com/gpu: 1
+        volumeMounts:
+        - name: results
+          mountPath: /results
+        - name: workspace
+          mountPath: /workspace
+        - name: dshm
+          mountPath: /dev/shm
+      volumes:
+      - name: results
+        persistentVolumeClaim:
+          claimName: orc-experiment-results
+      - name: workspace
+        emptyDir:
+          sizeLimit: 10Gi
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 32Gi
