@@ -121,5 +121,9 @@ class TSPLIBSearchSpace:
         return tuple(t)
 
     @property
+    def neighbor_table(self):
+        return None
+
+    @property
     def fitnesses(self) -> np.ndarray:
         return np.array([self._fitness_cache[i] for i in range(len(self._tours))])

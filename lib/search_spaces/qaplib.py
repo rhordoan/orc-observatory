@@ -70,6 +70,14 @@ class QAPLIBSearchSpace:
     def solution_label(self, idx: int) -> str:
         return str(self._perms[idx][: min(8, self._n)])
 
+    @property
+    def neighbor_table(self):
+        return None
+
+    @property
+    def fitnesses(self) -> np.ndarray:
+        return np.array([self._fitness_cache[i] for i in range(len(self._perms))])
+
     def _perm_cost(self, perm: tuple[int, ...]) -> float:
         p = np.asarray(perm, dtype=np.intp)
         return float(np.sum(self._dist * self._flow[np.ix_(p, p)]))
