@@ -11,7 +11,10 @@ import numpy as np
 # Common instances for paper experiments
 DEFAULT_INSTANCES = ("eil51", "berlin52", "kroA100", "ch150")
 
-_BASE_URL = "http://comopt.ifi.uni-heidelberg.de/software/TSPLIB95/tsp/"
+_BASE_URLS = [
+    "https://raw.githubusercontent.com/mastqe/tsplib/master/",
+    "http://comopt.ifi.uni-heidelberg.de/software/TSPLIB95/tsp/",
+]
 
 
 def default_data_dir() -> Path:
@@ -28,8 +31,16 @@ def download_tsplib(
         path = data_dir / f"{name}.tsp"
         if path.exists():
             continue
-        url = f"{_BASE_URL}{name}.tsp"
-        urllib.request.urlretrieve(url, path)
+        for base in _BASE_URLS:
+            try:
+                urllib.request.urlretrieve(f"{base}{name}.tsp", path)
+                break
+            except Exception:
+                continue
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Could not download {name}.tsp; place it manually in {data_dir}"
+            )
     return data_dir
 
 
