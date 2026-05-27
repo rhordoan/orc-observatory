@@ -33,6 +33,10 @@ class ShuffledFitnessSpace:
     def degree(self) -> int:
         return self._base.degree
 
+    @property
+    def neighbor_table(self):
+        return getattr(self._base, "neighbor_table", None)
+
     def fitness(self, idx: int) -> float:
         idx = int(idx)
         if idx < len(self._perm):
@@ -41,6 +45,10 @@ class ShuffledFitnessSpace:
 
     def neighbors(self, idx: int) -> np.ndarray:
         return self._base.neighbors(idx)
+
+    def neighbor_fitnesses(self, idx: int) -> np.ndarray:
+        nbrs = self._base.neighbors(idx)
+        return np.array([self.fitness(int(n)) for n in nbrs])
 
     def solution_label(self, idx: int) -> str:
         return self._base.solution_label(idx)
