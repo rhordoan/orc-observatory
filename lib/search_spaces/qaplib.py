@@ -79,6 +79,24 @@ class QAPLIBSearchSpace:
     def solution_label(self, idx: int) -> str:
         return str(self._perms[idx][: min(8, self._n)])
 
+    def hill_climb_from(self, idx: int) -> int:
+        """Delta-evaluation hill climb without materializing neighbor perms."""
+        p = list(self._perms[idx])
+        improved = True
+        while improved:
+            improved = False
+            best_delta = 0.0
+            best_r = best_s = -1
+            for r, s in self._swap_pairs:
+                delta = self._swap_delta(p, r, s)
+                if delta < best_delta:
+                    best_delta = delta
+                    best_r, best_s = r, s
+            if best_r >= 0:
+                p[best_r], p[best_s] = p[best_s], p[best_r]
+                improved = True
+        return self._register(tuple(p))
+
     def neighbor_fitnesses(self, idx: int) -> np.ndarray:
         """Fitness of all swap neighbors via O(n) delta per move."""
         p = list(self._perms[idx])

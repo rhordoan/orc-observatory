@@ -25,9 +25,10 @@ class LocalOptimum:
 def hill_climb(space: SearchSpace, start: int) -> int:
     """Best-improvement hill climbing from *start*. Returns local optimum index.
 
-    Ties among improving neighbors are broken by choosing the fittest.
-    Stops when no neighbor has strictly better fitness.
+    Uses delta-evaluation fast path (hill_climb_from) when available.
     """
+    if hasattr(space, "hill_climb_from"):
+        return space.hill_climb_from(start)
     current = start
     while True:
         nbrs = space.neighbors(current)

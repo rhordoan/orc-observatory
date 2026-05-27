@@ -129,6 +129,31 @@ class TSPLIBSearchSpace:
                 improved = True
         return tuple(t)
 
+    def hill_climb_from(self, idx: int) -> int:
+        """Delta-evaluation hill climb without materializing neighbor tours."""
+        tour = list(self._tours[idx])
+        n = self._n
+        d = self._dist
+        length = -self._fitness_cache[idx]
+        improved = True
+        while improved:
+            improved = False
+            best_delta = 0.0
+            best_i = best_j = -1
+            for i, j in self._moves:
+                ci, cj = tour[i], tour[j]
+                ci1 = tour[(i + 1) % n]
+                cj1 = tour[(j + 1) % n]
+                delta = d[ci, cj] + d[ci1, cj1] - d[ci, ci1] - d[cj, cj1]
+                if delta < best_delta:
+                    best_delta = delta
+                    best_i, best_j = i, j
+            if best_i >= 0:
+                tour[best_i + 1 : best_j + 1] = tour[best_i + 1 : best_j + 1][::-1]
+                length += best_delta
+                improved = True
+        return self._register(tuple(tour))
+
     def neighbor_fitnesses(self, idx: int) -> np.ndarray:
         """Fitness of all neighbors via O(1) delta per move. No tour materialization."""
         tour = self._tours[idx]
