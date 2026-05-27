@@ -1,16 +1,16 @@
 # Exp C: shuffle ablation only (escape + otg_lon already done)
+# kroA100 excluded: degree=4850 makes shuffled neighbor materialization too slow
 experiments:
   - shuffle
 use_gpu: true
 gamma: 1.0
 strategies: [orc, mingap, random]
-n_shuffles: 5
+n_shuffles: 3
 optima_mode: sample
 grid:
   items:
     - {type: tsplib, instance: eil51, n_restarts: 200, seeds: [0,1,2]}
     - {type: tsplib, instance: berlin52, n_restarts: 200, seeds: [0,1,2]}
-    - {type: tsplib, instance: kroA100, n_restarts: 150, seeds: [0,1,2]}
     - {type: qaplib, instance: nug12, n_restarts: 200, seeds: [0,1,2]}
     - {type: qaplib, instance: chr15a, n_restarts: 200, seeds: [0,1,2]}
     - {type: qaplib, instance: rou20, n_restarts: 150, seeds: [0,1,2]}
