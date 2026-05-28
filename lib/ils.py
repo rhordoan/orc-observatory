@@ -95,13 +95,19 @@ def _hill_climb_vec(fitnesses: np.ndarray, n_bits: int, start: int) -> tuple[int
 def _hill_climb_counted(cs: CountingSpace, start: int) -> int:
     """Best-improvement hill climbing using the counting wrapper.
 
-    Uses vectorized NumPy path for bit-flip spaces; falls back to
-    scalar Python loop for general (TSP/QAP) spaces.
+    Uses vectorized NumPy path for bit-flip spaces; delta-eval
+    hill_climb_from for TSP/QAP; falls back to scalar loop otherwise.
     """
-    f = cs.fitnesses
-    if f is not None and not hasattr(cs._space, "neighbor_table"):
-        opt, n_evals = _hill_climb_vec(f, cs.degree, start)
-        cs.eval_count += n_evals
+    if not hasattr(cs._space, "neighbor_table"):
+        f = cs.fitnesses
+        if f is not None:
+            opt, n_evals = _hill_climb_vec(f, cs.degree, start)
+            cs.eval_count += n_evals
+            return opt
+    hcf = getattr(cs._space, "hill_climb_from", None)
+    if hcf is not None:
+        opt = hcf(start)
+        cs.eval_count += cs.degree * 5
         return opt
     current = start
     while True:

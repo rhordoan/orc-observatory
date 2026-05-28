@@ -195,12 +195,12 @@ def ils_performance(
     seed: int = 0,
     **kwargs,
 ) -> float:
-    """Mean best fitness for one algorithm, normalized to [0, 1].
+    """Mean best fitness for one algorithm over trials.
 
-    Returns mean((best_found - worst) / (global_opt - worst)) over trials.
-    Parallelizes across CPU cores.
+    Uses threads for bit-flip spaces (thread-safe, precomputed);
+    runs sequentially for TSP/QAP (mutable shared state).
     """
-    from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+    from concurrent.futures import ThreadPoolExecutor
     import os
 
     trial_args = [
@@ -208,9 +208,13 @@ def ils_performance(
         for t in range(n_trials)
     ]
 
-    n_workers = min(os.cpu_count() or 4, n_trials, 64)
-    with ThreadPoolExecutor(max_workers=n_workers) as pool:
-        best_fitnesses = list(pool.map(_run_single_ils_trial, trial_args))
+    is_stateful = hasattr(space, "neighbor_table")
+    if is_stateful:
+        best_fitnesses = [_run_single_ils_trial(a) for a in trial_args]
+    else:
+        n_workers = min(os.cpu_count() or 4, n_trials, 64)
+        with ThreadPoolExecutor(max_workers=n_workers) as pool:
+            best_fitnesses = list(pool.map(_run_single_ils_trial, trial_args))
 
     return float(np.mean(best_fitnesses))
 
@@ -233,9 +237,13 @@ def ils_success_rate(
         for t in range(n_trials)
     ]
 
-    n_workers = min(os.cpu_count() or 4, n_trials, 64)
-    with ThreadPoolExecutor(max_workers=n_workers) as pool:
-        best_fitnesses = list(pool.map(_run_single_ils_trial, trial_args))
+    is_stateful = hasattr(space, "neighbor_table")
+    if is_stateful:
+        best_fitnesses = [_run_single_ils_trial(a) for a in trial_args]
+    else:
+        n_workers = min(os.cpu_count() or 4, n_trials, 64)
+        with ThreadPoolExecutor(max_workers=n_workers) as pool:
+            best_fitnesses = list(pool.map(_run_single_ils_trial, trial_args))
 
     successes = sum(1 for f in best_fitnesses if f >= global_opt - 1e-9)
     return 100.0 * successes / n_trials
