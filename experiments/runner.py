@@ -109,18 +109,19 @@ def run_ils(cfg: dict[str, Any], output_dir: Path) -> None:
     algos = cfg.get("algorithms", ["orc_pert", "random", "rrhc", "boltzmann"])
     budget = cfg.get("budget", 5000)
     n_trials = cfg.get("n_trials", 30)
-    for spec in _sweep_instances(cfg):
+    instances = _sweep_instances(cfg)
+    for ii, spec in enumerate(instances):
+        label = spec.get("instance", spec.get("type", "?"))
+        print(f"  ils [{ii+1}/{len(instances)}] {label} seed={spec.get('seed',0)} ...", flush=True)
         space = make_space(spec, use_gpu=cfg.get("use_gpu", False))
         row = {"type": spec["type"], "seed": spec.get("seed", 0)}
         for k in ("n", "k", "nu", "instance"):
             if k in spec:
                 row[k] = spec[k]
         for algo in algos:
-            row[f"success_{algo}_pct"] = ils_success_rate(
-                space,
-                algo,
-                budget=budget,
-                n_trials=n_trials,
+            from experiments.metrics import ils_performance
+            row[f"perf_{algo}"] = ils_performance(
+                space, algo, budget=budget, n_trials=n_trials,
                 seed=spec.get("seed", 0) * 1000,
             )
         rows.append(row)
@@ -149,10 +150,14 @@ def run_shuffle(cfg: dict[str, Any], output_dir: Path) -> None:
 
 
 def run_otg_features(cfg: dict[str, Any], output_dir: Path) -> None:
-    """Export per-instance OTG features for algorithm selection."""
+    """Export per-instance OTG + FLA features for algorithm selection."""
     rows = []
+    fla_rows = []
     use_gpu = cfg.get("use_gpu", False)
-    for spec in _sweep_instances(cfg):
+    instances = _sweep_instances(cfg)
+    for ii, spec in enumerate(instances):
+        label = spec.get("instance", spec.get("type", "?"))
+        print(f"  otg_features [{ii+1}/{len(instances)}] {label} seed={spec.get('seed',0)} ...", flush=True)
         space = make_space(spec, use_gpu=use_gpu)
         inst_cfg = {**spec, "use_gpu": use_gpu, "optima_mode": spec.get("optima_mode", cfg.get("optima_mode", "enumerate"))}
         optima, attractor = _collect_with_attractor(space, inst_cfg)
@@ -178,11 +183,22 @@ def run_otg_features(cfg: dict[str, Any], output_dir: Path) -> None:
             "mean_orc": float(np.mean(kappas)) if kappas else 0.0,
             "std_orc": float(np.std(kappas)) if kappas else 0.0,
         }
-        for k in ("n", "k", "nu"):
+        for k in ("n", "k", "nu", "instance"):
             if k in spec:
                 row[k] = spec[k]
+
+        from experiments.fla_features import compute_fla_features
+        fla = compute_fla_features(space, optima, seed=spec.get("seed", 0))
+        fla_row = {"type": spec["type"], "seed": spec.get("seed", 0), **fla}
+        for k in ("n", "k", "nu", "instance"):
+            if k in spec:
+                fla_row[k] = spec[k]
+        row.update(fla)
+
         rows.append(row)
+        fla_rows.append(fla_row)
     write_csv(output_dir / "otg_features.csv", rows)
+    write_csv(output_dir / "fla_features.csv", fla_rows)
 
 
 EXPERIMENTS = {

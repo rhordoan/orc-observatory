@@ -298,3 +298,163 @@ def mingap_ils(
             best = x_star
         yield ILSEvent(algo="mingap", evals=cs.eval_count,
                        best_fitness=best_fit, current_optimum=x_star)
+
+
+# ── Additional metaheuristics for algorithm selection ────────────────
+
+
+def simulated_annealing(
+    space: SearchSpace,
+    budget: int = 5000,
+    t_init: float = 2.0,
+    t_min: float = 0.01,
+    seed: int | None = None,
+) -> Generator[ILSEvent, None, None]:
+    """Simulated Annealing with geometric cooling."""
+    rng = np.random.default_rng(seed)
+    cs = CountingSpace(space)
+
+    current = int(rng.integers(0, cs.size))
+    current_fit = cs.fitness(current)
+    best, best_fit = current, current_fit
+
+    alpha = (t_min / t_init) ** (1.0 / max(budget - 1, 1))
+    temp = t_init
+
+    yield ILSEvent(algo="sa", evals=cs.eval_count,
+                   best_fitness=best_fit, current_optimum=current)
+
+    while cs.eval_count < budget:
+        nbrs = cs.neighbors(current)
+        candidate = int(rng.choice(nbrs))
+        cand_fit = cs.fitness(candidate)
+        delta = cand_fit - current_fit
+        if delta > 0 or rng.random() < np.exp(delta / max(temp, 1e-15)):
+            current, current_fit = candidate, cand_fit
+        if current_fit > best_fit:
+            best, best_fit = current, current_fit
+        temp *= alpha
+        yield ILSEvent(algo="sa", evals=cs.eval_count,
+                       best_fitness=best_fit, current_optimum=current)
+
+
+def tabu_search(
+    space: SearchSpace,
+    budget: int = 5000,
+    tabu_tenure: int | None = None,
+    seed: int | None = None,
+) -> Generator[ILSEvent, None, None]:
+    """Tabu Search with fixed-length recency memory."""
+    rng = np.random.default_rng(seed)
+    cs = CountingSpace(space)
+
+    if tabu_tenure is None:
+        tabu_tenure = max(7, space.degree // 3)
+
+    current = int(rng.integers(0, cs.size))
+    current_fit = cs.fitness(current)
+    best, best_fit = current, current_fit
+
+    from collections import deque
+    tabu_list: deque[int] = deque(maxlen=tabu_tenure)
+    tabu_set: set[int] = set()
+
+    yield ILSEvent(algo="tabu", evals=cs.eval_count,
+                   best_fitness=best_fit, current_optimum=current)
+
+    while cs.eval_count < budget:
+        nbrs = cs.neighbors(current)
+        best_cand, best_cand_fit = -1, float("-inf")
+        for n in nbrs:
+            n = int(n)
+            f = cs.fitness(n)
+            if cs.eval_count >= budget:
+                break
+            is_tabu = n in tabu_set
+            aspiration = f > best_fit
+            if (not is_tabu or aspiration) and f > best_cand_fit:
+                best_cand, best_cand_fit = n, f
+
+        if best_cand == -1:
+            break
+
+        if len(tabu_list) == tabu_tenure:
+            evicted = tabu_list[0]
+            tabu_set.discard(evicted)
+        tabu_list.append(current)
+        tabu_set.add(current)
+
+        current, current_fit = best_cand, best_cand_fit
+        if current_fit > best_fit:
+            best, best_fit = current, current_fit
+
+        yield ILSEvent(algo="tabu", evals=cs.eval_count,
+                       best_fitness=best_fit, current_optimum=current)
+
+
+def one_plus_one_ea(
+    space: SearchSpace,
+    budget: int = 5000,
+    seed: int | None = None,
+) -> Generator[ILSEvent, None, None]:
+    """(1+1) EA: mutate one random neighbor, accept if not worse."""
+    rng = np.random.default_rng(seed)
+    cs = CountingSpace(space)
+
+    current = int(rng.integers(0, cs.size))
+    current_fit = cs.fitness(current)
+    best, best_fit = current, current_fit
+
+    yield ILSEvent(algo="ea11", evals=cs.eval_count,
+                   best_fitness=best_fit, current_optimum=current)
+
+    while cs.eval_count < budget:
+        nbrs = cs.neighbors(current)
+        mutant = int(rng.choice(nbrs))
+        mutant_fit = cs.fitness(mutant)
+        if mutant_fit >= current_fit:
+            current, current_fit = mutant, mutant_fit
+        if current_fit > best_fit:
+            best, best_fit = current, current_fit
+        yield ILSEvent(algo="ea11", evals=cs.eval_count,
+                       best_fitness=best_fit, current_optimum=current)
+
+
+def variable_neighborhood_search(
+    space: SearchSpace,
+    budget: int = 5000,
+    k_max: int = 5,
+    seed: int | None = None,
+) -> Generator[ILSEvent, None, None]:
+    """VNS: shake with increasing random walk length, then hill-climb."""
+    rng = np.random.default_rng(seed)
+    cs = CountingSpace(space)
+
+    start = int(rng.integers(0, cs.size))
+    x_star = _hill_climb_counted(cs, start)
+    best = x_star
+    best_fit = cs.fitness(best)
+
+    yield ILSEvent(algo="vns", evals=cs.eval_count,
+                   best_fitness=best_fit, current_optimum=x_star)
+
+    k = 1
+    while cs.eval_count < budget:
+        current = x_star
+        for _ in range(k):
+            nbrs = cs.neighbors(current)
+            current = int(rng.choice(nbrs))
+
+        x_prime = _hill_climb_counted(cs, current)
+        f = cs.fitness(x_prime)
+
+        if f > best_fit:
+            best_fit = f
+            best = x_prime
+            x_star = x_prime
+            k = 1
+        else:
+            k = k + 1 if k < k_max else 1
+
+        yield ILSEvent(algo="vns", evals=cs.eval_count,
+                       best_fitness=best_fit, current_optimum=x_star)

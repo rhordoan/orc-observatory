@@ -153,32 +153,66 @@ def _lon_mean_rank(lon, optima: list[LocalOptimum]) -> float:
     return float(np.mean(ranks)) if ranks else 0.5
 
 
-def _run_single_ils_trial(args: tuple) -> bool:
-    """Run one ILS trial; returns True if global optimum found."""
-    space, algo, budget, trial_seed, global_opt, kwargs = args
-    from lib.ils import orc_ils, random_ils, random_restart_hc, mingap_ils, orc_only_ils
+def _make_ils_generator(space, algo, budget, trial_seed, kwargs):
+    from lib.ils import (orc_ils, random_ils, random_restart_hc,
+                         mingap_ils, orc_only_ils, simulated_annealing,
+                         tabu_search, one_plus_one_ea,
+                         variable_neighborhood_search)
     from experiments.boltzmann_ils import boltzmann_orc_ils
 
-    if algo == "orc_pert":
-        gen = orc_ils(space, budget=budget, d_r=kwargs.get("d_r", 2), seed=trial_seed)
-    elif algo == "random":
-        gen = random_ils(space, budget=budget, d_r_total=kwargs.get("d_r_total", 3), seed=trial_seed)
-    elif algo == "rrhc":
-        gen = random_restart_hc(space, budget=budget, seed=trial_seed)
-    elif algo == "orc_only":
-        gen = orc_only_ils(space, budget=budget, seed=trial_seed)
-    elif algo == "mingap":
-        gen = mingap_ils(space, budget=budget, seed=trial_seed)
-    elif algo == "boltzmann":
-        gen = boltzmann_orc_ils(
-            space, budget=budget, d_r=kwargs.get("d_r", 2), seed=trial_seed
-        )
-    else:
-        raise ValueError(algo)
+    dispatch = {
+        "orc_pert": lambda: orc_ils(space, budget=budget, d_r=kwargs.get("d_r", 2), seed=trial_seed),
+        "random": lambda: random_ils(space, budget=budget, d_r_total=kwargs.get("d_r_total", 3), seed=trial_seed),
+        "rrhc": lambda: random_restart_hc(space, budget=budget, seed=trial_seed),
+        "orc_only": lambda: orc_only_ils(space, budget=budget, seed=trial_seed),
+        "mingap": lambda: mingap_ils(space, budget=budget, seed=trial_seed),
+        "boltzmann": lambda: boltzmann_orc_ils(space, budget=budget, d_r=kwargs.get("d_r", 2), seed=trial_seed),
+        "sa": lambda: simulated_annealing(space, budget=budget, seed=trial_seed),
+        "tabu": lambda: tabu_search(space, budget=budget, seed=trial_seed),
+        "ea11": lambda: one_plus_one_ea(space, budget=budget, seed=trial_seed),
+        "vns": lambda: variable_neighborhood_search(space, budget=budget, seed=trial_seed),
+    }
+    if algo not in dispatch:
+        raise ValueError(f"Unknown algorithm: {algo}")
+    return dispatch[algo]()
+
+
+def _run_single_ils_trial(args: tuple) -> float:
+    """Run one ILS trial; returns best fitness found."""
+    space, algo, budget, trial_seed, kwargs = args
+    gen = _make_ils_generator(space, algo, budget, trial_seed, kwargs)
     best = -float("inf")
     for ev in gen:
         best = max(best, ev.best_fitness)
-    return best >= global_opt - 1e-9
+    return best
+
+
+def ils_performance(
+    space: SearchSpace,
+    algo: str,
+    budget: int = 2000,
+    n_trials: int = 30,
+    seed: int = 0,
+    **kwargs,
+) -> float:
+    """Mean best fitness for one algorithm, normalized to [0, 1].
+
+    Returns mean((best_found - worst) / (global_opt - worst)) over trials.
+    Parallelizes across CPU cores.
+    """
+    from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+    import os
+
+    trial_args = [
+        (space, algo, budget, seed + t, kwargs)
+        for t in range(n_trials)
+    ]
+
+    n_workers = min(os.cpu_count() or 4, n_trials, 64)
+    with ThreadPoolExecutor(max_workers=n_workers) as pool:
+        best_fitnesses = list(pool.map(_run_single_ils_trial, trial_args))
+
+    return float(np.mean(best_fitnesses))
 
 
 def ils_success_rate(
@@ -189,25 +223,19 @@ def ils_success_rate(
     seed: int = 0,
     **kwargs,
 ) -> float:
-    """Success rate (finding global optimum) for one ILS variant.
-
-    Parallelizes independent trials across CPU cores for throughput.
-    """
+    """Success rate (finding global optimum) for one ILS variant."""
     from concurrent.futures import ThreadPoolExecutor
     import os
 
     global_opt = max(space.fitness(s) for s in range(space.size))
     trial_args = [
-        (space, algo, budget, seed + t, global_opt, kwargs)
+        (space, algo, budget, seed + t, kwargs)
         for t in range(n_trials)
     ]
 
-    n_workers = min(os.cpu_count() or 4, n_trials, 8)
-    if n_workers > 1:
-        with ThreadPoolExecutor(max_workers=n_workers) as pool:
-            results = list(pool.map(_run_single_ils_trial, trial_args))
-    else:
-        results = [_run_single_ils_trial(a) for a in trial_args]
+    n_workers = min(os.cpu_count() or 4, n_trials, 64)
+    with ThreadPoolExecutor(max_workers=n_workers) as pool:
+        best_fitnesses = list(pool.map(_run_single_ils_trial, trial_args))
 
-    successes = sum(results)
+    successes = sum(1 for f in best_fitnesses if f >= global_opt - 1e-9)
     return 100.0 * successes / n_trials
