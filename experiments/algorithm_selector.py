@@ -75,7 +75,7 @@ def _compute_selection_metrics(
     ])
     pipe_lr = Pipeline([
         ("scaler", StandardScaler()),
-        ("clf", LogisticRegression(max_iter=3000, multi_class="auto", random_state=42)),
+        ("clf", LogisticRegression(max_iter=3000, random_state=42)),
     ])
 
     cv = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
