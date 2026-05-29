@@ -1,96 +1,67 @@
-"""Experiment metrics: escape rates, OTG/LON, ILS success."""
+"""Experiment metrics: escape rates, OTG/LON, ILS performance.
+
+All escape-related measurements use the same unified pipeline to
+guarantee identical methodology across real/shuffled/baseline conditions.
+"""
 
 from __future__ import annotations
+
+import time
+from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 
 from lib.search_spaces.protocol import SearchSpace
 from lib.hill_climb import LocalOptimum, hill_climb
-from lib.orc import compute_all_orc, min_orc_neighbor
+from lib.orc import compute_all_orc
 from lib.otg import build_otg
 from lib.lon import build_lon_d1
 
 
-def min_gap_neighbor(space: SearchSpace, x: int) -> int:
-    """Neighbor with smallest fitness gap |f(y) - f(x)|."""
+# ── Escape strategy helpers ──────────────────────────────────────────
+
+def _orc_direction(orc_vals: dict[int, float]) -> int:
+    """Most-negative ORC neighbor."""
+    return min(orc_vals, key=orc_vals.get)
+
+
+def _mingap_direction(space: SearchSpace, x: int) -> int:
+    """Neighbor with smallest |f(y) - f(x)|."""
     nbrs = space.neighbors(x)
     fx = space.fitness(x)
-    best = int(nbrs[0])
-    best_gap = abs(space.fitness(best) - fx)
+    best, best_gap = int(nbrs[0]), abs(space.fitness(int(nbrs[0])) - fx)
     for n in nbrs[1:]:
         g = abs(space.fitness(int(n)) - fx)
         if g < best_gap:
-            best_gap = g
-            best = int(n)
+            best_gap, best = g, int(n)
     return best
 
 
-def escape_rate(
-    space: SearchSpace,
-    optima: list[LocalOptimum],
-    strategy: str,
-    gamma: float = 1.0,
-    n_random_trials: int = 30,
-    rng: np.random.Generator | None = None,
-    use_gpu: bool = False,
-    attractor: np.ndarray | None = None,
-) -> dict[str, float]:
-    """Fraction of optima where one perturbation + HC reaches a better optimum.
+def _maxgap_direction(space: SearchSpace, x: int) -> int:
+    """Neighbor with largest |f(y) - f(x)| (opposite of MinGap)."""
+    nbrs = space.neighbors(x)
+    fx = space.fitness(x)
+    best, best_gap = int(nbrs[0]), abs(space.fitness(int(nbrs[0])) - fx)
+    for n in nbrs[1:]:
+        g = abs(space.fitness(int(n)) - fx)
+        if g > best_gap:
+            best_gap, best = g, int(n)
+    return best
 
-    For "orc": uses Algorithm 1 (OTG resolution with curvature-ranked fallback),
-    matching the thesis definition of %ORC.
-    """
-    if rng is None:
-        rng = np.random.default_rng(0)
 
-    global_best = max(o.fitness for o in optima)
-    n = len(optima)
-    if n == 0:
-        return {"escape_pct": 0.0, "n_optima": 0}
+def _steepest_direction(space: SearchSpace, x: int) -> int:
+    """Neighbor with highest fitness (greedy ascent)."""
+    nbrs = space.neighbors(x)
+    best, best_f = int(nbrs[0]), space.fitness(int(nbrs[0]))
+    for n in nbrs[1:]:
+        f = space.fitness(int(n))
+        if f > best_f:
+            best_f, best = f, int(n)
+    return best
 
-    successes = 0.0
-    eligible = 0
 
-    orc_cache: dict[int, dict[int, float]] | None = None
-    if strategy == "orc":
-        orc_cache = _precompute_orc(space, optima, gamma, use_gpu, attractor)
-
-    for i, opt in enumerate(optima):
-        if opt.fitness >= global_best - 1e-12:
-            continue
-        eligible += 1
-
-        if strategy == "orc":
-            all_orc = orc_cache[i]
-            best_nbr = min(all_orc, key=all_orc.get)
-            dest = hill_climb(space, best_nbr)
-            if space.fitness(dest) > opt.fitness:
-                successes += 1
-        elif strategy == "mingap":
-            y = min_gap_neighbor(space, opt.idx)
-            dest = hill_climb(space, y)
-            if space.fitness(dest) > opt.fitness:
-                successes += 1
-        elif strategy == "random":
-            trial_hits = 0
-            for _ in range(n_random_trials):
-                nbrs = space.neighbors(opt.idx)
-                y = int(rng.choice(nbrs))
-                dest = hill_climb(space, y)
-                if space.fitness(dest) > opt.fitness:
-                    trial_hits += 1
-            successes += trial_hits / n_random_trials
-        else:
-            raise ValueError(strategy)
-
-    pct = 100.0 * successes / max(eligible, 1)
-    return {
-        "escape_pct": pct,
-        "n_optima": n,
-        "n_eligible": eligible,
-        "n_success": int(successes) if isinstance(successes, int) else successes,
-    }
-
+# ── Precompute ORC ───────────────────────────────────────────────────
 
 def _precompute_orc(
     space: SearchSpace,
@@ -99,23 +70,208 @@ def _precompute_orc(
     use_gpu: bool = False,
     attractor: np.ndarray | None = None,
 ) -> dict[int, dict[int, float]]:
-    """Batch-compute ORC values for all optima, reusing the GPU path when possible."""
     from lib.orc import compute_all_orc, batch_orc_gpu
 
     max_nbrs = 60 if space.degree > 100 else None
-
     if space.degree > 30 and hasattr(space, "neighbor_table"):
-        optima_idx_arr = np.array([o.idx for o in optima], dtype=np.int64)
+        idx_arr = np.array([o.idx for o in optima], dtype=np.int64)
         return batch_orc_gpu(
-            space, optima_idx_arr, gamma,
+            space, idx_arr, gamma,
             max_neighbors=max_nbrs or space.degree,
         )
-
     orc_values: dict[int, dict[int, float]] = {}
     for i, opt in enumerate(optima):
         orc_values[i] = compute_all_orc(space, opt.idx, gamma, max_neighbors=max_nbrs)
     return orc_values
 
+
+# ── Per-optimum escape result ────────────────────────────────────────
+
+@dataclass
+class EscapeResult:
+    """Result for a single optimum under a single strategy."""
+    escaped: bool
+    fitness_improvement: float  # (f(dest) - f(x*)) / (f_global - f(x*))
+
+
+# ── Unified escape measurement ───────────────────────────────────────
+
+def _measure_escape_for_optimum(
+    real_space: SearchSpace,
+    opt: LocalOptimum,
+    neighbor_idx: int,
+    global_best: float,
+) -> EscapeResult:
+    """Hill-climb from neighbor_idx in real_space, check real fitness improvement."""
+    dest = hill_climb(real_space, neighbor_idx)
+    dest_fit = real_space.fitness(dest)
+    improved = dest_fit > opt.fitness + 1e-12
+    gap = global_best - opt.fitness
+    norm_improvement = (dest_fit - opt.fitness) / gap if gap > 1e-12 else 0.0
+    return EscapeResult(escaped=improved, fitness_improvement=norm_improvement)
+
+
+def unified_escape_rate(
+    space: SearchSpace,
+    optima: list[LocalOptimum],
+    gamma: float = 1.0,
+    n_random_trials: int = 30,
+    n_shuffles: int = 5,
+    seed: int = 0,
+    use_gpu: bool = False,
+    attractor: np.ndarray | None = None,
+) -> dict[str, Any]:
+    """Unified escape measurement: all strategies use the SAME optima,
+    SAME hill_climb, SAME fitness check.
+
+    Strategies: orc, mingap, maxgap, steepest, random, shuffled_orc (x n_shuffles).
+    Returns per-strategy: escape_pct, mean_improvement, per_optimum results.
+    """
+    rng = np.random.default_rng(seed)
+    global_best = max(o.fitness for o in optima)
+
+    eligible_optima = [(i, opt) for i, opt in enumerate(optima)
+                       if opt.fitness < global_best - 1e-12]
+    n_eligible = len(eligible_optima)
+    if n_eligible == 0:
+        return {"n_optima": len(optima), "n_eligible": 0}
+
+    # Precompute real ORC
+    real_orc = _precompute_orc(space, optima, gamma, use_gpu, attractor)
+
+    # Precompute shuffled ORCs
+    from experiments.ablations import ShuffledFitnessSpace, make_shuffle_perm
+    shuffled_orcs = []
+    for s in range(n_shuffles):
+        perm = make_shuffle_perm(space, seed + s + 1)
+        shuf_space = ShuffledFitnessSpace(space, perm)
+        shuf_orc = _precompute_orc(shuf_space, optima, gamma, use_gpu=False)
+        shuffled_orcs.append(shuf_orc)
+
+    strategies = ["orc", "mingap", "maxgap", "steepest", "random"]
+    for s in range(n_shuffles):
+        strategies.append(f"shuffled_{s}")
+
+    results_per_opt: dict[str, list[EscapeResult]] = {s: [] for s in strategies}
+
+    for i, opt in eligible_optima:
+        # ORC direction
+        orc_nbr = _orc_direction(real_orc[i])
+        results_per_opt["orc"].append(
+            _measure_escape_for_optimum(space, opt, orc_nbr, global_best))
+
+        # MinGap direction
+        mg_nbr = _mingap_direction(space, opt.idx)
+        results_per_opt["mingap"].append(
+            _measure_escape_for_optimum(space, opt, mg_nbr, global_best))
+
+        # MaxGap direction
+        mxg_nbr = _maxgap_direction(space, opt.idx)
+        results_per_opt["maxgap"].append(
+            _measure_escape_for_optimum(space, opt, mxg_nbr, global_best))
+
+        # Steepest-ascent direction
+        sa_nbr = _steepest_direction(space, opt.idx)
+        results_per_opt["steepest"].append(
+            _measure_escape_for_optimum(space, opt, sa_nbr, global_best))
+
+        # Random direction (average over n_random_trials)
+        nbrs = space.neighbors(opt.idx)
+        random_escaped = 0
+        random_improvement = 0.0
+        for _ in range(n_random_trials):
+            y = int(rng.choice(nbrs))
+            r = _measure_escape_for_optimum(space, opt, y, global_best)
+            random_escaped += r.escaped
+            random_improvement += r.fitness_improvement
+        results_per_opt["random"].append(EscapeResult(
+            escaped=random_escaped / n_random_trials > 0.5,
+            fitness_improvement=random_improvement / n_random_trials,
+        ))
+
+        # Shuffled ORC directions
+        for s in range(n_shuffles):
+            shuf_nbr = _orc_direction(shuffled_orcs[s][i])
+            results_per_opt[f"shuffled_{s}"].append(
+                _measure_escape_for_optimum(space, opt, shuf_nbr, global_best))
+
+    # Aggregate
+    out: dict[str, Any] = {
+        "n_optima": len(optima),
+        "n_eligible": n_eligible,
+    }
+
+    for strat in ["orc", "mingap", "maxgap", "steepest", "random"]:
+        res = results_per_opt[strat]
+        esc_pct = 100.0 * sum(r.escaped for r in res) / n_eligible
+        mean_imp = float(np.mean([r.fitness_improvement for r in res]))
+        out[f"escape_{strat}_pct"] = esc_pct
+        out[f"improvement_{strat}"] = mean_imp
+
+    # Shuffled: aggregate across all shuffle seeds
+    shuf_esc_per_seed = []
+    shuf_imp_per_seed = []
+    for s in range(n_shuffles):
+        res = results_per_opt[f"shuffled_{s}"]
+        shuf_esc_per_seed.append(100.0 * sum(r.escaped for r in res) / n_eligible)
+        shuf_imp_per_seed.append(float(np.mean([r.fitness_improvement for r in res])))
+    out["escape_shuffled_mean_pct"] = float(np.mean(shuf_esc_per_seed))
+    out["escape_shuffled_std_pct"] = float(np.std(shuf_esc_per_seed))
+    out["improvement_shuffled_mean"] = float(np.mean(shuf_imp_per_seed))
+    out["n_shuffles"] = n_shuffles
+
+    # Ratios
+    out["orc_over_random"] = out["escape_orc_pct"] / max(out["escape_random_pct"], 1e-9)
+    out["orc_over_shuffled"] = out["escape_orc_pct"] / max(out["escape_shuffled_mean_pct"], 1e-9)
+    out["orc_over_mingap"] = out["escape_orc_pct"] / max(out["escape_mingap_pct"], 1e-9)
+
+    # Per-optimum arrays for statistical tests
+    out["_per_opt_orc"] = [r.escaped for r in results_per_opt["orc"]]
+    out["_per_opt_mingap"] = [r.escaped for r in results_per_opt["mingap"]]
+    out["_per_opt_random"] = [r.escaped for r in results_per_opt["random"]]
+    out["_per_opt_steepest"] = [r.escaped for r in results_per_opt["steepest"]]
+
+    return out
+
+
+def compute_statistical_tests(rows: list[dict]) -> dict[str, Any]:
+    """Wilcoxon signed-rank tests and A12 effect size across instances."""
+    from scipy.stats import wilcoxon
+
+    orc_escs = np.array([r["escape_orc_pct"] for r in rows])
+    mg_escs = np.array([r["escape_mingap_pct"] for r in rows])
+    rand_escs = np.array([r["escape_random_pct"] for r in rows])
+    shuf_escs = np.array([r["escape_shuffled_mean_pct"] for r in rows])
+    steep_escs = np.array([r["escape_steepest_pct"] for r in rows])
+    mxg_escs = np.array([r["escape_maxgap_pct"] for r in rows])
+
+    def safe_wilcoxon(a, b):
+        diff = a - b
+        diff = diff[np.abs(diff) > 1e-12]
+        if len(diff) < 10:
+            return float("nan")
+        try:
+            return wilcoxon(diff, alternative="greater").pvalue
+        except Exception:
+            return float("nan")
+
+    def a12(a, b):
+        """Vargha-Delaney A12: P(a > b) + 0.5 * P(a == b)."""
+        n = len(a)
+        wins = sum((ai > bi) + 0.5 * (ai == bi) for ai, bi in zip(a, b))
+        return wins / n
+
+    tests = {}
+    for name, baseline in [("mingap", mg_escs), ("random", rand_escs),
+                           ("shuffled", shuf_escs), ("steepest", steep_escs),
+                           ("maxgap", mxg_escs)]:
+        tests[f"wilcoxon_orc_vs_{name}_p"] = safe_wilcoxon(orc_escs, baseline)
+        tests[f"a12_orc_vs_{name}"] = a12(orc_escs, baseline)
+
+    return tests
+
+
+# ── OTG / LON structural metrics ────────────────────────────────────
 
 def otg_lon_metrics(
     space: SearchSpace,
@@ -124,7 +280,6 @@ def otg_lon_metrics(
     use_gpu: bool = False,
     attractor: np.ndarray | None = None,
 ) -> dict[str, float]:
-    """Structural metrics for OTG and LON-d1."""
     otg = build_otg(space, optima, gamma=gamma,
                      use_gpu=use_gpu, attractor=attractor)
     lon = build_lon_d1(space, optima)
@@ -153,6 +308,8 @@ def _lon_mean_rank(lon, optima: list[LocalOptimum]) -> float:
     return float(np.mean(ranks)) if ranks else 0.5
 
 
+# ── ILS performance ─────────────────────────────────────────────────
+
 def _make_ils_generator(space, algo, budget, trial_seed, kwargs):
     from lib.ils import (orc_ils, random_ils, random_restart_hc,
                          mingap_ils, orc_only_ils, simulated_annealing,
@@ -178,7 +335,6 @@ def _make_ils_generator(space, algo, budget, trial_seed, kwargs):
 
 
 def _run_single_ils_trial(args: tuple) -> float:
-    """Run one ILS trial; returns best fitness found."""
     space, algo, budget, trial_seed, kwargs = args
     gen = _make_ils_generator(space, algo, budget, trial_seed, kwargs)
     best = -float("inf")
@@ -187,19 +343,25 @@ def _run_single_ils_trial(args: tuple) -> float:
     return best
 
 
+def _run_single_ils_trial_curve(args: tuple) -> list[tuple[int, float]]:
+    """Run one ILS trial; returns convergence curve [(evals, best_fitness), ...]."""
+    space, algo, budget, trial_seed, kwargs = args
+    gen = _make_ils_generator(space, algo, budget, trial_seed, kwargs)
+    curve = []
+    for ev in gen:
+        curve.append((ev.evals, ev.best_fitness))
+    return curve
+
+
 def ils_performance(
     space: SearchSpace,
     algo: str,
     budget: int = 2000,
-    n_trials: int = 30,
+    n_trials: int = 50,
     seed: int = 0,
     **kwargs,
-) -> float:
-    """Mean best fitness for one algorithm over trials.
-
-    Uses threads for bit-flip spaces (thread-safe, precomputed);
-    runs sequentially for TSP/QAP (mutable shared state).
-    """
+) -> dict[str, float]:
+    """Mean best fitness + per-trial results for statistical tests."""
     from concurrent.futures import ThreadPoolExecutor
     import os
 
@@ -216,34 +378,50 @@ def ils_performance(
         with ThreadPoolExecutor(max_workers=n_workers) as pool:
             best_fitnesses = list(pool.map(_run_single_ils_trial, trial_args))
 
-    return float(np.mean(best_fitnesses))
+    return {
+        "mean": float(np.mean(best_fitnesses)),
+        "std": float(np.std(best_fitnesses)),
+        "median": float(np.median(best_fitnesses)),
+        "trials": best_fitnesses,
+    }
 
 
-def ils_success_rate(
+def ils_convergence(
     space: SearchSpace,
     algo: str,
     budget: int = 5000,
-    n_trials: int = 30,
+    n_trials: int = 50,
     seed: int = 0,
     **kwargs,
-) -> float:
-    """Success rate (finding global optimum) for one ILS variant."""
-    from concurrent.futures import ThreadPoolExecutor
-    import os
-
-    global_opt = max(space.fitness(s) for s in range(space.size))
+) -> list[list[tuple[int, float]]]:
+    """Collect convergence curves for all trials."""
     trial_args = [
         (space, algo, budget, seed + t, kwargs)
         for t in range(n_trials)
     ]
+    return [_run_single_ils_trial_curve(a) for a in trial_args]
 
-    is_stateful = hasattr(space, "neighbor_table")
-    if is_stateful:
-        best_fitnesses = [_run_single_ils_trial(a) for a in trial_args]
-    else:
-        n_workers = min(os.cpu_count() or 4, n_trials, 64)
-        with ThreadPoolExecutor(max_workers=n_workers) as pool:
-            best_fitnesses = list(pool.map(_run_single_ils_trial, trial_args))
 
-    successes = sum(1 for f in best_fitnesses if f >= global_opt - 1e-9)
-    return 100.0 * successes / n_trials
+# ── Scalability timing ──────────────────────────────────────────────
+
+def time_orc_computation(
+    space: SearchSpace,
+    optima: list[LocalOptimum],
+    gamma: float = 1.0,
+    n_repeats: int = 3,
+) -> dict[str, float]:
+    """Time ORC computation for scalability analysis."""
+    times = []
+    for _ in range(n_repeats):
+        t0 = time.perf_counter()
+        for i, opt in enumerate(optima[:min(50, len(optima))]):
+            compute_all_orc(space, opt.idx, gamma)
+        elapsed = time.perf_counter() - t0
+        times.append(elapsed)
+    n_computed = min(50, len(optima))
+    return {
+        "mean_total_s": float(np.mean(times)),
+        "per_optimum_ms": float(np.mean(times)) / max(n_computed, 1) * 1000,
+        "degree": space.degree,
+        "n_optima_timed": n_computed,
+    }
