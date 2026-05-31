@@ -51,6 +51,9 @@ class ShuffledFitnessSpace:
 
     def _ensure_fit_arr(self, min_size: int) -> None:
         if self._fit_arr is None or len(self._fit_arr) < min_size:
+            batch_fn = getattr(self._base, "_batch_compute_missing_fitnesses", None)
+            if batch_fn is not None:
+                batch_fn()
             self._fit_arr = np.array(
                 [self._base.fitness(i) for i in range(self._base.size)]
             )
