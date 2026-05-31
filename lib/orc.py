@@ -216,12 +216,17 @@ def batch_orc_gpu(
     optima_indices: np.ndarray,
     gamma: float = 1.0,
     max_neighbors: int = 60,
-) -> dict[int, dict[int, float]]:
+    return_topology: bool = False,
+) -> dict[int, dict[int, float]] | tuple:
     """Batch ORC for all optima, GPU-accelerated via CuPy.
 
     Uses neighbor_fitnesses() (O(1) delta per move) when available to
     avoid materializing neighbor tour tuples. For N(y)\\{x} exclusion,
     finds x by matching fitness value f(x). Then batch sort+match on GPU.
+
+    When return_topology=True, returns (orc_values, topology_dict) so
+    shuffled ORCs can reuse the same edge set without re-materializing
+    neighbor tours.
     """
     try:
         import cupy as cp
@@ -274,6 +279,15 @@ def batch_orc_gpu(
             y_fit_cache[y] = space.neighbor_fitnesses(y) if has_delta else np.array([space.fitness(int(n)) for n in space.neighbors(y)])
 
     print(f"    batch_orc: neighbor fitness in {_time.time()-t1:.1f}s", flush=True)
+
+    if return_topology:
+        t_cache = _time.time()
+        n_cached = 0
+        for y in unique_ys:
+            _ = space.neighbors(y)
+            n_cached += 1
+        print(f"    batch_orc: pre-cached {n_cached} neighbor arrays in {_time.time()-t_cache:.1f}s", flush=True)
+
     t2 = _time.time()
 
     total = len(pair_list)
@@ -314,6 +328,85 @@ def batch_orc_gpu(
         if opt_i not in orc_values:
             orc_values[opt_i] = {}
         orc_values[opt_i][y_node] = float(kappas_cpu[p])
+
+    if return_topology:
+        topology = {
+            "pair_list": pair_list,
+            "unique_ys": unique_ys,
+            "opt_nbr_nodes": opt_nbr_nodes,
+            "selected_move_idx": selected_move_idx,
+        }
+        return orc_values, topology
+    return orc_values
+
+
+def batch_orc_reuse_topology(
+    space: SearchSpace,
+    optima_indices: np.ndarray,
+    gamma: float,
+    topology: dict,
+) -> dict[int, dict[int, float]]:
+    """Recompute ORC on the same edges with different fitness values.
+
+    Reuses pair_list and unique_ys from a prior batch_orc_gpu call,
+    avoiding neighbor-tour materialization entirely.
+    """
+    import time as _time
+
+    pair_list = topology["pair_list"]
+    unique_ys = topology["unique_ys"]
+
+    k = space.degree
+    n_excl = k - 1
+    has_delta = hasattr(space, "neighbor_fitnesses")
+
+    t0 = _time.time()
+
+    opt_nbr_fit: list[np.ndarray] = []
+    for x in optima_indices:
+        nf = space.neighbor_fitnesses(int(x)) if has_delta else np.array(
+            [space.fitness(int(n)) for n in space.neighbors(int(x))])
+        opt_nbr_fit.append(nf)
+
+    print(f"    batch_orc_reuse: optima fitnesses in {_time.time()-t0:.1f}s", flush=True)
+    t1 = _time.time()
+
+    y_fit_cache: dict[int, np.ndarray] = {}
+    for y in unique_ys:
+        y_fit_cache[y] = space.neighbor_fitnesses(y) if has_delta else np.array(
+            [space.fitness(int(n)) for n in space.neighbors(y)])
+
+    print(f"    batch_orc_reuse: unique_y fitnesses in {_time.time()-t1:.1f}s", flush=True)
+    t2 = _time.time()
+
+    total = len(pair_list)
+    fx_block = np.empty((total, n_excl), dtype=np.float64)
+    fy_block = np.empty((total, n_excl), dtype=np.float64)
+
+    for p, (opt_i, y_node, move_idx) in enumerate(pair_list):
+        fx_block[p] = np.delete(opt_nbr_fit[opt_i], move_idx)[:n_excl]
+
+        fy_full = y_fit_cache[y_node]
+        x_node = int(optima_indices[opt_i])
+        fx_val = space.fitness(x_node)
+        x_pos = int(np.argmin(np.abs(fy_full - fx_val)))
+        fy_block[p] = np.delete(fy_full, x_pos)[:n_excl]
+
+    print(f"    batch_orc_reuse: blocks in {_time.time()-t2:.1f}s", flush=True)
+    t3 = _time.time()
+
+    fx_block.sort(axis=1)
+    fy_block.sort(axis=1)
+    costs = n_excl * 2.0 + gamma * np.abs(fx_block - fy_block).sum(axis=1)
+    kappas = 1.0 - costs / (k + 1)
+
+    print(f"    batch_orc_reuse: sort+match in {_time.time()-t3:.1f}s, total {_time.time()-t0:.1f}s", flush=True)
+
+    orc_values: dict[int, dict[int, float]] = {}
+    for p, (opt_i, y_node, _) in enumerate(pair_list):
+        if opt_i not in orc_values:
+            orc_values[opt_i] = {}
+        orc_values[opt_i][y_node] = float(kappas[p])
 
     return orc_values
 

@@ -69,19 +69,29 @@ def _precompute_orc(
     gamma: float,
     use_gpu: bool = False,
     attractor: np.ndarray | None = None,
-) -> dict[int, dict[int, float]]:
-    from lib.orc import compute_all_orc, batch_orc_gpu
+    return_topology: bool = False,
+    topology: dict | None = None,
+) -> dict[int, dict[int, float]] | tuple:
+    from lib.orc import compute_all_orc, batch_orc_gpu, batch_orc_reuse_topology
 
     max_nbrs = 60 if space.degree > 100 else None
     if space.degree > 30 and hasattr(space, "neighbor_table"):
         idx_arr = np.array([o.idx for o in optima], dtype=np.int64)
+        mn = max_nbrs or space.degree
+
+        if topology is not None:
+            return batch_orc_reuse_topology(space, idx_arr, gamma, topology)
+
         return batch_orc_gpu(
             space, idx_arr, gamma,
-            max_neighbors=max_nbrs or space.degree,
+            max_neighbors=mn,
+            return_topology=return_topology,
         )
     orc_values: dict[int, dict[int, float]] = {}
     for i, opt in enumerate(optima):
         orc_values[i] = compute_all_orc(space, opt.idx, gamma, max_neighbors=max_nbrs)
+    if return_topology:
+        return orc_values, None
     return orc_values
 
 
@@ -136,16 +146,23 @@ def unified_escape_rate(
     if n_eligible == 0:
         return {"n_optima": len(optima), "n_eligible": 0}
 
-    # Precompute real ORC
-    real_orc = _precompute_orc(space, optima, gamma, use_gpu, attractor)
+    # Precompute real ORC (with topology for structured spaces)
+    is_structured = space.degree > 30 and hasattr(space, "neighbor_table")
+    if is_structured:
+        real_orc, topology = _precompute_orc(
+            space, optima, gamma, use_gpu, attractor, return_topology=True)
+    else:
+        real_orc = _precompute_orc(space, optima, gamma, use_gpu, attractor)
+        topology = None
 
-    # Precompute shuffled ORCs
+    # Precompute shuffled ORCs (reuse topology when available)
     from experiments.ablations import ShuffledFitnessSpace, make_shuffle_perm
     shuffled_orcs = []
     for s in range(n_shuffles):
         perm = make_shuffle_perm(space, seed + s + 1)
         shuf_space = ShuffledFitnessSpace(space, perm)
-        shuf_orc = _precompute_orc(shuf_space, optima, gamma, use_gpu=False)
+        shuf_orc = _precompute_orc(
+            shuf_space, optima, gamma, use_gpu=False, topology=topology)
         shuffled_orcs.append(shuf_orc)
 
     strategies = ["orc", "mingap", "maxgap", "steepest", "random"]
