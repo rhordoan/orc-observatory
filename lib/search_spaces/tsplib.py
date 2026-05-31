@@ -42,6 +42,12 @@ class TSPLIBSearchSpace:
         self._fitness_cache: dict[int, float] = {}
         self._nbr_cache: dict[int, np.ndarray] = {}
 
+        moves_arr = np.array(self._moves, dtype=np.intp)
+        self._moves_i = moves_arr[:, 0]
+        self._moves_j = moves_arr[:, 1]
+        self._moves_i1 = (self._moves_i + 1) % self._n
+        self._moves_j1 = (self._moves_j + 1) % self._n
+
         t0 = time.time()
         for _ in range(n_restarts):
             tour = self._random_tour()
@@ -102,72 +108,55 @@ class TSPLIBSearchSpace:
         return tour[: i + 1] + tour[j : i : -1] + tour[j + 1 :]
 
     def _hill_climb_tour(self, tour: tuple[int, ...]) -> tuple[int, ...]:
-        """Best-improvement 2-opt with O(1) delta evaluation per move."""
-        t = list(tour)
-        n = self._n
+        """Best-improvement 2-opt with vectorized delta evaluation."""
+        t = np.asarray(tour, dtype=np.intp)
         d = self._dist
-        length = float(self._dist[np.asarray(t, dtype=np.intp),
-                                   np.roll(np.asarray(t, dtype=np.intp), -1)].sum())
         improved = True
         while improved:
-            improved = False
-            best_delta = 0.0
-            best_i = best_j = -1
-            for i, j in self._moves:
-                ci, cj = t[i], t[j]
-                ci1 = t[(i + 1) % n]
-                cj1 = t[(j + 1) % n]
-                old = d[ci, ci1] + d[cj, cj1]
-                new = d[ci, cj] + d[ci1, cj1]
-                delta = new - old
-                if delta < best_delta:
-                    best_delta = delta
-                    best_i, best_j = i, j
-            if best_i >= 0:
-                t[best_i + 1 : best_j + 1] = t[best_i + 1 : best_j + 1][::-1]
-                length += best_delta
-                improved = True
+            ci = t[self._moves_i]
+            cj = t[self._moves_j]
+            ci1 = t[self._moves_i1]
+            cj1 = t[self._moves_j1]
+            delta = d[ci, cj] + d[ci1, cj1] - d[ci, ci1] - d[cj, cj1]
+            best_k = int(np.argmin(delta))
+            if delta[best_k] < -1e-12:
+                bi = int(self._moves_i[best_k])
+                bj = int(self._moves_j[best_k])
+                t[bi + 1 : bj + 1] = t[bi + 1 : bj + 1][::-1]
+            else:
+                improved = False
         return tuple(t)
 
     def hill_climb_from(self, idx: int) -> int:
-        """Delta-evaluation hill climb without materializing neighbor tours."""
-        tour = list(self._tours[idx])
-        n = self._n
+        """Vectorized delta-evaluation hill climb."""
+        t = np.asarray(self._tours[idx], dtype=np.intp)
         d = self._dist
-        length = -self._fitness_cache[idx]
         improved = True
         while improved:
-            improved = False
-            best_delta = 0.0
-            best_i = best_j = -1
-            for i, j in self._moves:
-                ci, cj = tour[i], tour[j]
-                ci1 = tour[(i + 1) % n]
-                cj1 = tour[(j + 1) % n]
-                delta = d[ci, cj] + d[ci1, cj1] - d[ci, ci1] - d[cj, cj1]
-                if delta < best_delta:
-                    best_delta = delta
-                    best_i, best_j = i, j
-            if best_i >= 0:
-                tour[best_i + 1 : best_j + 1] = tour[best_i + 1 : best_j + 1][::-1]
-                length += best_delta
-                improved = True
-        return self._register(tuple(tour))
+            ci = t[self._moves_i]
+            cj = t[self._moves_j]
+            ci1 = t[self._moves_i1]
+            cj1 = t[self._moves_j1]
+            delta = d[ci, cj] + d[ci1, cj1] - d[ci, ci1] - d[cj, cj1]
+            best_k = int(np.argmin(delta))
+            if delta[best_k] < -1e-12:
+                bi = int(self._moves_i[best_k])
+                bj = int(self._moves_j[best_k])
+                t[bi + 1 : bj + 1] = t[bi + 1 : bj + 1][::-1]
+            else:
+                improved = False
+        return self._register(tuple(t))
 
     def neighbor_fitnesses(self, idx: int) -> np.ndarray:
-        """Fitness of all neighbors via O(1) delta per move. No tour materialization."""
-        tour = self._tours[idx]
-        n = self._n
-        d = self._dist
+        """Vectorized fitness of all 2-opt neighbors via numpy fancy indexing."""
+        tour_arr = np.asarray(self._tours[idx], dtype=np.intp)
         base_length = -self._fitness_cache[idx]
-        result = np.empty(self._degree, dtype=np.float64)
-        for k, (i, j) in enumerate(self._moves):
-            ci, cj = tour[i], tour[j]
-            ci1 = tour[(i + 1) % n]
-            cj1 = tour[(j + 1) % n]
-            delta = d[ci, cj] + d[ci1, cj1] - d[ci, ci1] - d[cj, cj1]
-            result[k] = -(base_length + delta)
-        return result
+        ci = tour_arr[self._moves_i]
+        cj = tour_arr[self._moves_j]
+        ci1 = tour_arr[self._moves_i1]
+        cj1 = tour_arr[self._moves_j1]
+        delta = self._dist[ci, cj] + self._dist[ci1, cj1] - self._dist[ci, ci1] - self._dist[cj, cj1]
+        return -(base_length + delta)
 
     @property
     def neighbor_table(self):

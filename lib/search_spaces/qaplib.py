@@ -32,6 +32,9 @@ class QAPLIBSearchSpace:
         self._degree = len(self._swap_pairs)
         self._fitness_cache: dict[int, float] = {}
         self._nbr_cache: dict[int, np.ndarray] = {}
+        swap_arr = np.array(self._swap_pairs, dtype=np.intp)
+        self._swap_r = swap_arr[:, 0]
+        self._swap_s = swap_arr[:, 1]
 
         t0 = time.time()
         for _ in range(n_restarts):
@@ -80,32 +83,46 @@ class QAPLIBSearchSpace:
         return str(self._perms[idx][: min(8, self._n)])
 
     def hill_climb_from(self, idx: int) -> int:
-        """Delta-evaluation hill climb without materializing neighbor perms."""
-        p = list(self._perms[idx])
+        """Vectorized delta-evaluation hill climb."""
+        p = np.asarray(self._perms[idx], dtype=np.intp)
         improved = True
         while improved:
-            improved = False
-            best_delta = 0.0
-            best_r = best_s = -1
-            for r, s in self._swap_pairs:
-                delta = self._swap_delta(p, r, s)
-                if delta < best_delta:
-                    best_delta = delta
-                    best_r, best_s = r, s
-            if best_r >= 0:
-                p[best_r], p[best_s] = p[best_s], p[best_r]
-                improved = True
+            deltas = self._all_swap_deltas(p)
+            best_k = int(np.argmin(deltas))
+            if deltas[best_k] < -1e-12:
+                r, s = int(self._swap_r[best_k]), int(self._swap_s[best_k])
+                p[r], p[s] = p[s], p[r]
+            else:
+                improved = False
         return self._register(tuple(p))
 
     def neighbor_fitnesses(self, idx: int) -> np.ndarray:
-        """Fitness of all swap neighbors via O(n) delta per move."""
-        p = list(self._perms[idx])
+        """Vectorized fitness of all swap neighbors."""
+        p = np.asarray(self._perms[idx], dtype=np.intp)
         base_cost = -self._fitness_cache[idx]
-        result = np.empty(self._degree, dtype=np.float64)
-        for k, (r, s) in enumerate(self._swap_pairs):
-            delta = self._swap_delta(p, r, s)
-            result[k] = -(base_cost + delta)
-        return result
+        return -(base_cost + self._all_swap_deltas(p))
+
+    def _all_swap_deltas(self, p: np.ndarray) -> np.ndarray:
+        """Vectorized O(n) delta for every swap pair simultaneously."""
+        n = self._n
+        d, f = self._dist, self._flow
+        R, S = self._swap_r, self._swap_s
+        pr, ps = p[R], p[S]
+        deltas = np.empty(len(R), dtype=np.float64)
+        for idx in range(len(R)):
+            r, s = int(R[idx]), int(S[idx])
+            pr_v, ps_v = int(pr[idx]), int(ps[idx])
+            mask = np.ones(n, dtype=bool)
+            mask[r] = mask[s] = False
+            k = np.where(mask)[0]
+            pk = p[k]
+            delta = float(np.sum(
+                (d[r, k] - d[s, k]) * (f[ps_v, pk] - f[pr_v, pk]) +
+                (d[k, r] - d[k, s]) * (f[pk, ps_v] - f[pk, pr_v])
+            ))
+            delta += float((d[r, s] - d[s, r]) * (f[ps_v, pr_v] - f[pr_v, ps_v]))
+            deltas[idx] = delta
+        return deltas
 
     @property
     def neighbor_table(self):
@@ -138,19 +155,15 @@ class QAPLIBSearchSpace:
         return delta
 
     def _hill_climb_perm(self, perm: tuple[int, ...]) -> tuple[int, ...]:
-        """Best-improvement swap with O(n) delta evaluation per move."""
-        p = list(perm)
+        """Best-improvement swap with vectorized delta evaluation."""
+        p = np.asarray(perm, dtype=np.intp)
         improved = True
         while improved:
-            improved = False
-            best_delta = 0.0
-            best_r = best_s = -1
-            for r, s in self._swap_pairs:
-                delta = self._swap_delta(p, r, s)
-                if delta < best_delta:
-                    best_delta = delta
-                    best_r, best_s = r, s
-            if best_r >= 0:
-                p[best_r], p[best_s] = p[best_s], p[best_r]
-                improved = True
+            deltas = self._all_swap_deltas(p)
+            best_k = int(np.argmin(deltas))
+            if deltas[best_k] < -1e-12:
+                r, s = int(self._swap_r[best_k]), int(self._swap_s[best_k])
+                p[r], p[s] = p[s], p[r]
+            else:
+                improved = False
         return tuple(p)

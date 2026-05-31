@@ -26,6 +26,7 @@ class ShuffledFitnessSpace:
     def __init__(self, base: SearchSpace, perm: np.ndarray) -> None:
         self._base = base
         self._perm = perm.astype(np.intp)
+        self._fit_arr: np.ndarray | None = None
 
     @property
     def size(self) -> int:
@@ -48,9 +49,29 @@ class ShuffledFitnessSpace:
     def neighbors(self, idx: int) -> np.ndarray:
         return self._base.neighbors(idx)
 
+    def _ensure_fit_arr(self, min_size: int) -> None:
+        if self._fit_arr is None or len(self._fit_arr) < min_size:
+            self._fit_arr = np.array(
+                [self._base.fitness(i) for i in range(self._base.size)]
+            )
+
     def neighbor_fitnesses(self, idx: int) -> np.ndarray:
         nbrs = self._base.neighbors(idx)
-        return np.array([self.fitness(int(n)) for n in nbrs])
+        self._ensure_fit_arr(int(nbrs.max()) + 1)
+        perm = self._perm
+        n_perm = len(perm)
+        in_range = nbrs < n_perm
+        permuted = np.empty_like(nbrs)
+        permuted[in_range] = perm[nbrs[in_range]]
+        permuted[~in_range] = nbrs[~in_range]
+        safe = permuted < len(self._fit_arr)
+        if np.all(safe):
+            return self._fit_arr[permuted]
+        result = np.empty(len(nbrs), dtype=np.float64)
+        result[safe] = self._fit_arr[permuted[safe]]
+        for i in np.where(~safe)[0]:
+            result[i] = self._base.fitness(int(permuted[i]))
+        return result
 
     def solution_label(self, idx: int) -> str:
         return self._base.solution_label(idx)
