@@ -1,0 +1,39 @@
+# Scalability-only config — run AFTER escape/otg/ils phases already saved
+# Uses the same grid as master_tevc.yaml
+
+experiments:
+  - scalability
+
+grid:
+  items:
+    # ── NK landscapes ──────────────────────────────────
+    - {type: nk, n: 16, k: 4,  seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: nk, n: 16, k: 6,  seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: nk, n: 16, k: 8,  seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: nk, n: 16, k: 10, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: nk, n: 16, k: 12, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: nk, n: 18, k: 4,  seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: nk, n: 18, k: 8,  seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: nk, n: 18, k: 12, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: nk, n: 20, k: 4,  seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: nk, n: 20, k: 8,  seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: nk, n: 20, k: 12, seeds: [0,1,2,3,4,5,6,7,8,9]}
+
+    # ── W-model ───────────────────────────────────────
+    - {type: wmodel, n: 16, nu: 3, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: wmodel, n: 16, nu: 5, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: wmodel, n: 16, nu: 7, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: wmodel, n: 18, nu: 3, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: wmodel, n: 18, nu: 5, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: wmodel, n: 20, nu: 3, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: wmodel, n: 20, nu: 5, seeds: [0,1,2,3,4,5,6,7,8,9]}
+
+    # ── TSPLIB (2-opt neighborhood) ───────────────────
+    - {type: tsplib, instance: eil51,    n_restarts: 300, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: tsplib, instance: berlin52, n_restarts: 300, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: tsplib, instance: kroA100,  n_restarts: 150, seeds: [0,1,2,3,4,5,6,7,8,9]}
+
+    # ── QAPLIB (transposition swap) ──────────────────
+    - {type: qaplib, instance: nug12,  n_restarts: 300, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: qaplib, instance: chr15a, n_restarts: 300, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: qaplib, instance: rou20,  n_restarts: 200, seeds: [0,1,2,3,4,5,6,7,8,9]}

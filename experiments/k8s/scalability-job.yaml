@@ -1,0 +1,73 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: orc-tevc-scalability
+  namespace: runai-romania-dev
+  labels:
+    app: orc-tevc
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app: orc-tevc
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: k8s-worker-gpu-node-xe8545
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 60
+      containers:
+      - name: runner
+        image: python:3.11-slim
+        imagePullPolicy: IfNotPresent
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -ex
+          apt-get update && apt-get install -y --no-install-recommends git
+          cd /workspace
+          git clone https://github.com/rhordoan/orc-observatory.git repo
+          cd repo
+          pip3 install --no-cache-dir \
+            -r requirements.txt \
+            -r experiments/requirements-experiments.txt
+
+          echo "=== Running scalability experiment (batch ORC for structured) ==="
+          python3 -m experiments.runner \
+            --config experiments/configs/scalability_only.yaml \
+            --output /results/tevc-v1
+
+          echo "=== Running algorithm selector ==="
+          python3 -m experiments.algorithm_selector \
+            --features /results/tevc-v1/otg_features.csv \
+            --fla /results/tevc-v1/fla_features.csv \
+            --ils /results/tevc-v1/ils_comparison_b2000.csv \
+            --output /results/tevc-v1
+
+          echo "=== SCALABILITY + ALG SELECTOR COMPLETE ==="
+          ls -lR /results/tevc-v1/
+        env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: DEBIAN_FRONTEND
+          value: "noninteractive"
+        resources:
+          requests:
+            cpu: "128"
+            memory: 128Gi
+          limits:
+            cpu: "128"
+            memory: 128Gi
+        volumeMounts:
+        - name: results
+          mountPath: /results
+        - name: workspace
+          mountPath: /workspace
+      volumes:
+      - name: results
+        persistentVolumeClaim:
+          claimName: orc-experiment-results
+      - name: workspace
+        emptyDir:
+          sizeLimit: 10Gi

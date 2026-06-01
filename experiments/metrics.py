@@ -428,14 +428,24 @@ def time_orc_computation(
     n_repeats: int = 3,
 ) -> dict[str, float]:
     """Time ORC computation for scalability analysis."""
+    from lib.orc import batch_orc_gpu
+
+    is_structured = space.degree > 30 and hasattr(space, "neighbor_table")
+    n_computed = min(50, len(optima))
+    idx_arr = np.array([o.idx for o in optima[:n_computed]], dtype=np.int64)
+
     times = []
     for _ in range(n_repeats):
         t0 = time.perf_counter()
-        for i, opt in enumerate(optima[:min(50, len(optima))]):
-            compute_all_orc(space, opt.idx, gamma)
+        if is_structured:
+            batch_orc_gpu(space, idx_arr, gamma,
+                          max_neighbors=min(60, space.degree))
+        else:
+            for opt in optima[:n_computed]:
+                compute_all_orc(space, opt.idx, gamma)
         elapsed = time.perf_counter() - t0
         times.append(elapsed)
-    n_computed = min(50, len(optima))
+
     return {
         "mean_total_s": float(np.mean(times)),
         "per_optimum_ms": float(np.mean(times)) / max(n_computed, 1) * 1000,
