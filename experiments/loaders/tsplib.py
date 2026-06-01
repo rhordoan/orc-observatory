@@ -9,7 +9,11 @@ from pathlib import Path
 import numpy as np
 
 # Common instances for paper experiments
-DEFAULT_INSTANCES = ("eil51", "berlin52", "kroA100", "ch150")
+DEFAULT_INSTANCES = (
+    "eil51", "berlin52", "kroA100", "ch150",
+    "st70", "eil76", "pr76", "rat99", "kroB100", "kroC100", "kroD100",
+    "eil101", "ch130",
+)
 
 _BASE_URLS = [
     "https://raw.githubusercontent.com/mastqe/tsplib/master/",

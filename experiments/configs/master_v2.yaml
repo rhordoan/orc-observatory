@@ -1,0 +1,115 @@
+# Master v2: Three-track experiment suite
+#
+# Track 1 (ELA for CO): ORC features as universal discrete landscape features
+#   - Cross-domain algorithm selection (LODO evaluation)
+#   - ORC vs FLA feature importance comparison
+#
+# Track 2 (Continuous navigation): ORC as real-time search compass
+#   - orc_walk: follow min-kappa chain for k steps
+#   - orc_adaptive: adapt perturbation from curvature magnitude
+#   - orc_sa: curvature-biased simulated annealing
+#
+# Track 3 (Real-world OR): Structured problems where ORC should dominate
+#   - 10 TSPLIB instances (up from 3)
+#   - 6 QAPLIB instances (up from 3)
+#   - 6 Flowshop instances (new domain)
+#   - MAX-SAT instances (already implemented, newly included)
+#
+# ~680 instances across 6 problem domains
+
+experiments:
+  - escape
+  - otg_features
+  - ils
+  - scalability
+
+# Escape config
+n_random_trials: 30
+n_shuffles: 5
+
+# ILS config -- 12 algorithms including 3 new ORC-navigation variants
+algorithms:
+  - orc_pert
+  - boltzmann
+  - random
+  - rrhc
+  - mingap
+  - sa
+  - tabu
+  - ea11
+  - vns
+  - orc_walk
+  - orc_adaptive
+  - orc_sa
+budgets: [5000, 20000]
+n_trials: 50
+
+grid:
+  items:
+    # ══════════════════════════════════════════════════════════════
+    # NK landscapes (bit-flip, full enumeration)
+    # ══════════════════════════════════════════════════════════════
+    - {type: nk, n: 16, k: 4,  seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: nk, n: 16, k: 6,  seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: nk, n: 16, k: 8,  seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: nk, n: 16, k: 10, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: nk, n: 16, k: 12, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: nk, n: 18, k: 4,  seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: nk, n: 18, k: 8,  seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: nk, n: 18, k: 12, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: nk, n: 20, k: 4,  seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: nk, n: 20, k: 8,  seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: nk, n: 20, k: 12, seeds: [0,1,2,3,4,5,6,7,8,9]}
+
+    # ══════════════════════════════════════════════════════════════
+    # W-model (bit-flip, full enumeration)
+    # ══════════════════════════════════════════════════════════════
+    - {type: wmodel, n: 16, nu: 3, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: wmodel, n: 16, nu: 5, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: wmodel, n: 16, nu: 7, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: wmodel, n: 18, nu: 3, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: wmodel, n: 18, nu: 5, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: wmodel, n: 20, nu: 3, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: wmodel, n: 20, nu: 5, seeds: [0,1,2,3,4,5,6,7,8,9]}
+
+    # ══════════════════════════════════════════════════════════════
+    # MAX-SAT (bit-flip, full enumeration) -- NEW in master
+    # ══════════════════════════════════════════════════════════════
+    - {type: maxsat, n: 16, alpha: 4.27, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: maxsat, n: 18, alpha: 4.27, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: maxsat, n: 16, alpha: 3.0,  seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: maxsat, n: 18, alpha: 3.0,  seeds: [0,1,2,3,4,5,6,7,8,9]}
+
+    # ══════════════════════════════════════════════════════════════
+    # TSPLIB (2-opt, sampling) -- expanded from 3 to 10 instances
+    # ══════════════════════════════════════════════════════════════
+    - {type: tsplib, instance: eil51,    n_restarts: 300, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: tsplib, instance: berlin52, n_restarts: 300, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: tsplib, instance: st70,     n_restarts: 250, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: tsplib, instance: eil76,    n_restarts: 250, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: tsplib, instance: pr76,     n_restarts: 250, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: tsplib, instance: rat99,    n_restarts: 200, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: tsplib, instance: kroA100,  n_restarts: 150, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: tsplib, instance: kroB100,  n_restarts: 150, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: tsplib, instance: eil101,   n_restarts: 150, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: tsplib, instance: ch130,    n_restarts: 120, seeds: [0,1,2,3,4,5,6,7,8,9]}
+
+    # ══════════════════════════════════════════════════════════════
+    # QAPLIB (transposition swap, sampling) -- expanded from 3 to 6
+    # ══════════════════════════════════════════════════════════════
+    - {type: qaplib, instance: nug12,  n_restarts: 300, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: qaplib, instance: tai12a, n_restarts: 300, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: qaplib, instance: had14,  n_restarts: 300, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: qaplib, instance: chr15a, n_restarts: 300, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: qaplib, instance: esc16a, n_restarts: 250, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: qaplib, instance: rou20,  n_restarts: 200, seeds: [0,1,2,3,4,5,6,7,8,9]}
+
+    # ══════════════════════════════════════════════════════════════
+    # Flowshop (pairwise swap, sampling) -- NEW DOMAIN
+    # ══════════════════════════════════════════════════════════════
+    - {type: flowshop, instance: tai20_5_0,  n_restarts: 500, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: flowshop, instance: tai20_5_1,  n_restarts: 500, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: flowshop, instance: tai20_10_0, n_restarts: 400, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: flowshop, instance: tai20_10_1, n_restarts: 400, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: flowshop, instance: tai20_20_0, n_restarts: 300, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: flowshop, instance: tai50_5_0,  n_restarts: 300, seeds: [0,1,2,3,4,5,6,7,8,9]}

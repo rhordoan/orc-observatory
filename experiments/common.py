@@ -87,6 +87,16 @@ def make_space(spec: dict[str, Any], use_gpu: bool = False) -> SearchSpace:
             seed=seed,
             use_gpu=use_gpu,
         )
+    if kind == "flowshop":
+        from lib.search_spaces.flowshop import FlowshopSearchSpace
+
+        return FlowshopSearchSpace(
+            instance_name=spec["instance"],
+            data_dir=spec.get("data_dir"),
+            n_restarts=spec.get("n_restarts", 500),
+            seed=seed,
+            use_gpu=use_gpu,
+        )
     raise ValueError(f"Unknown space type: {kind}")
 
 
@@ -101,7 +111,7 @@ def collect_optima(
     from lib.hill_climb import LocalOptimum, enumerate_local_optima, random_restart_optima
 
     kind = cfg.get("type", "")
-    if kind in ("tsplib", "qaplib"):
+    if kind in ("tsplib", "qaplib", "flowshop"):
         optima = [
             LocalOptimum(idx=i, fitness=space.fitness(i), basin=[i])
             for i in range(space.size)

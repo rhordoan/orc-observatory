@@ -1,0 +1,29 @@
+# Quick smoke test for master v2 (all three tracks, minimal instances)
+
+experiments:
+  - escape
+  - otg_features
+  - ils
+
+n_random_trials: 5
+n_shuffles: 2
+
+algorithms:
+  - orc_pert
+  - random
+  - rrhc
+  - sa
+  - orc_walk
+  - orc_adaptive
+  - orc_sa
+budgets: [1000]
+n_trials: 10
+
+grid:
+  items:
+    - {type: nk, n: 14, k: 4, seeds: [0,1]}
+    - {type: wmodel, n: 14, nu: 3, seeds: [0,1]}
+    - {type: maxsat, n: 14, alpha: 4.27, seeds: [0,1]}
+    - {type: tsplib, instance: eil51, n_restarts: 50, seeds: [0,1]}
+    - {type: qaplib, instance: nug12, n_restarts: 50, seeds: [0,1]}
+    - {type: flowshop, instance: tai20_5_0, n_restarts: 50, seeds: [0,1]}

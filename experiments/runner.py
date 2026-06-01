@@ -45,7 +45,7 @@ def _collect_with_attractor(space, inst_cfg):
 
 def _instance_key(spec: dict) -> dict:
     row = {"type": spec["type"], "seed": spec.get("seed", 0)}
-    for k in ("n", "k", "nu", "instance"):
+    for k in ("n", "k", "nu", "instance", "alpha"):
         if k in spec:
             row[k] = spec[k]
     return row

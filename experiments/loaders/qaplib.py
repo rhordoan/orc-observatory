@@ -7,7 +7,10 @@ from pathlib import Path
 
 import numpy as np
 
-DEFAULT_INSTANCES = ("nug12", "chr15a", "rou20", "tai25a")
+DEFAULT_INSTANCES = (
+    "nug12", "chr15a", "rou20", "tai25a",
+    "tai12a", "had14", "esc16a", "bur26a",
+)
 
 _BASE = "https://www.celar.uniroma1.it/QAPLIB/InstRes"
 

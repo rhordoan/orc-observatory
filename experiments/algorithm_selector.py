@@ -438,6 +438,28 @@ def train_and_evaluate(
             print(f"    Best k={fs['best_k']}: gap-cl={fs['best_gap_closure_pct']:.1f}%", flush=True)
             print(f"    Top MI features: {list(fs['mutual_info_ranking'].keys())[:5]}", flush=True)
 
+    # ── Cross-domain evaluation (Track 1: universality) ──
+    if "type" in df.columns and all_feats:
+        domains = sorted(df["type"].unique())
+        if len(domains) >= 3:
+            print("  Running cross-domain (LODO) evaluation...", flush=True)
+            for fs_key, fs_cols, fs_label in [
+                ("otg", otg_available, "OTG features"),
+                ("fla", fla_available, "FLA features"),
+                ("all", all_feats, "All features"),
+            ]:
+                if not fs_cols:
+                    continue
+                lodo = _cross_domain_evaluation(df, fs_cols, algo_cols, fs_label, domains)
+                results[f"cross_domain_{fs_key}"] = lodo
+                _print_cross_domain(fs_key, lodo)
+
+    # ── ORC vs FLA feature importance comparison ──
+    if otg_available and fla_available:
+        print("  Running ORC vs FLA feature comparison...", flush=True)
+        results["orc_vs_fla"] = _orc_vs_fla_comparison(
+            df, otg_available, fla_available, basic_available, algo_cols)
+
     output_dir.mkdir(parents=True, exist_ok=True)
     with (output_dir / "selector_results_v2.json").open("w", encoding="utf-8") as f:
         json.dump(results, f, indent=2, default=str)
@@ -467,6 +489,167 @@ def _print_result(key: str, res: dict) -> None:
     if res.get("easy_hard_analysis"):
         for subset, info in res["easy_hard_analysis"].items():
             print(f"      {subset}: gap-cl={info['gap_closure_pct']:.1f}% ({info['n_instances']} inst)", flush=True)
+
+
+def _cross_domain_evaluation(
+    df: pd.DataFrame,
+    feature_cols: list[str],
+    algo_cols: list[str],
+    label: str,
+    domains: list[str],
+) -> dict:
+    """Leave-one-domain-out (LODO) evaluation for universality.
+
+    Train on all domains except one, test on the held-out domain.
+    Shows whether ORC features generalize across problem types.
+    """
+    X = df[feature_cols].fillna(0).values.astype(np.float64)
+    perf_matrix = df[algo_cols].values.astype(np.float64)
+    y_best = df["best_algo"].values
+    algo_to_idx = {c.replace("perf_", ""): i for i, c in enumerate(algo_cols)}
+    domain_col = df["type"].values
+
+    per_domain = {}
+    all_sel_perfs = []
+    all_vbs_perfs = []
+    all_sbs_perfs = []
+
+    for held_out in domains:
+        test_mask = domain_col == held_out
+        train_mask = ~test_mask
+        if test_mask.sum() < 5 or train_mask.sum() < 10:
+            continue
+
+        X_train, X_test = X[train_mask], X[test_mask]
+        y_train = y_best[train_mask]
+        test_perf = perf_matrix[test_mask]
+
+        pipe = Pipeline([
+            ("scaler", StandardScaler()),
+            ("clf", RandomForestClassifier(
+                n_estimators=300, max_depth=10, min_samples_leaf=3,
+                random_state=42, n_jobs=-1)),
+        ])
+        pipe.fit(X_train, y_train)
+        preds = pipe.predict(X_test)
+
+        d_vbs = test_perf.max(axis=1).mean()
+        d_sbs = test_perf.mean(axis=0).max()
+        d_sel = np.mean([test_perf[i, algo_to_idx[p]] for i, p in enumerate(preds)])
+        d_gap = d_vbs - d_sbs
+        d_gc = (d_sel - d_sbs) / max(d_gap, 1e-9) * 100 if d_gap > 1e-9 else 100.0
+        d_acc = (preds == y_best[test_mask]).mean() * 100
+
+        per_domain[held_out] = {
+            "n_train": int(train_mask.sum()),
+            "n_test": int(test_mask.sum()),
+            "accuracy": round(float(d_acc), 2),
+            "gap_closure_pct": round(float(d_gc), 2),
+            "vbs": round(float(d_vbs), 6),
+            "sbs": round(float(d_sbs), 6),
+            "selector": round(float(d_sel), 6),
+        }
+        all_sel_perfs.extend([test_perf[i, algo_to_idx[p]] for i, p in enumerate(preds)])
+        all_vbs_perfs.extend(test_perf.max(axis=1).tolist())
+        all_sbs_perfs.extend([test_perf.mean(axis=0).max()] * test_mask.sum())
+
+    overall_vbs = np.mean(all_vbs_perfs) if all_vbs_perfs else 0.0
+    overall_sbs = np.mean(all_sbs_perfs) if all_sbs_perfs else 0.0
+    overall_sel = np.mean(all_sel_perfs) if all_sel_perfs else 0.0
+    overall_gap = overall_vbs - overall_sbs
+    overall_gc = (overall_sel - overall_sbs) / max(overall_gap, 1e-9) * 100 if overall_gap > 1e-9 else 100.0
+
+    return {
+        "label": f"LODO: {label}",
+        "overall_gap_closure_pct": round(float(overall_gc), 2),
+        "overall_vbs": round(float(overall_vbs), 6),
+        "overall_sbs": round(float(overall_sbs), 6),
+        "overall_selector": round(float(overall_sel), 6),
+        "per_domain": per_domain,
+    }
+
+
+def _orc_vs_fla_comparison(
+    df: pd.DataFrame,
+    otg_features: list[str],
+    fla_features: list[str],
+    basic_features: list[str],
+    algo_cols: list[str],
+) -> dict:
+    """Direct comparison: ORC-derived vs classical FLA features.
+
+    For each feature set, compute:
+    - Per-feature mutual information with best_algo
+    - 10-fold CV gap closure using only that feature set
+    - Marginal contribution when added to basic features
+    """
+    X_all = df[otg_features + fla_features + basic_features].fillna(0).values
+    y_best = df["best_algo"].values
+    perf_matrix = df[algo_cols].values.astype(np.float64)
+    algo_to_idx = {c.replace("perf_", ""): i for i, c in enumerate(algo_cols)}
+
+    le = LabelEncoder()
+    y_enc = le.fit_transform(y_best)
+
+    vbs = perf_matrix.max(axis=1).mean()
+    sbs = perf_matrix.mean(axis=0).max()
+    gap = vbs - sbs
+
+    def _gc_for_feats(feat_cols):
+        X = df[feat_cols].fillna(0).values.astype(np.float64)
+        if len(feat_cols) == 0 or len(df) < 20:
+            return 0.0
+        cv = StratifiedKFold(n_splits=min(10, len(df)), shuffle=True, random_state=42)
+        pipe = Pipeline([
+            ("scaler", StandardScaler()),
+            ("clf", RandomForestClassifier(
+                n_estimators=200, max_depth=8, random_state=42, n_jobs=-1)),
+        ])
+        from sklearn.model_selection import cross_val_predict
+        preds = cross_val_predict(pipe, X, y_best, cv=cv)
+        sel_perf = np.mean([perf_matrix[i, algo_to_idx[p]] for i, p in enumerate(preds)])
+        return (sel_perf - sbs) / max(gap, 1e-9) * 100 if gap > 1e-9 else 100.0
+
+    all_features = otg_features + fla_features + basic_features
+    X_for_mi = df[all_features].fillna(0).values.astype(np.float64)
+    mi_scores = mutual_info_classif(X_for_mi, y_enc, random_state=42)
+    mi_per_feature = {all_features[i]: round(float(mi_scores[i]), 4)
+                      for i in range(len(all_features))}
+
+    orc_mean_mi = np.mean([mi_per_feature[f] for f in otg_features]) if otg_features else 0
+    fla_mean_mi = np.mean([mi_per_feature[f] for f in fla_features]) if fla_features else 0
+
+    gc_orc = _gc_for_feats(otg_features)
+    gc_fla = _gc_for_feats(fla_features)
+    gc_basic = _gc_for_feats(basic_features)
+    gc_basic_orc = _gc_for_feats(basic_features + otg_features)
+    gc_basic_fla = _gc_for_feats(basic_features + fla_features)
+    gc_all = _gc_for_feats(all_features)
+
+    return {
+        "mi_per_feature": dict(sorted(mi_per_feature.items(), key=lambda x: -x[1])),
+        "orc_mean_mi": round(float(orc_mean_mi), 4),
+        "fla_mean_mi": round(float(fla_mean_mi), 4),
+        "standalone_gap_closure": {
+            "orc_only": round(float(gc_orc), 2),
+            "fla_only": round(float(gc_fla), 2),
+            "basic_only": round(float(gc_basic), 2),
+        },
+        "marginal_over_basic": {
+            "basic_plus_orc": round(float(gc_basic_orc), 2),
+            "basic_plus_fla": round(float(gc_basic_fla), 2),
+            "orc_marginal_gain": round(float(gc_basic_orc - gc_basic), 2),
+            "fla_marginal_gain": round(float(gc_basic_fla - gc_basic), 2),
+        },
+        "all_combined": round(float(gc_all), 2),
+    }
+
+
+def _print_cross_domain(key: str, lodo: dict) -> None:
+    print(f"    [LODO-{key}] Overall gap-cl={lodo['overall_gap_closure_pct']:.1f}%", flush=True)
+    for domain, info in lodo.get("per_domain", {}).items():
+        print(f"      {domain}: gap-cl={info['gap_closure_pct']:.1f}% acc={info['accuracy']:.1f}% "
+              f"(train={info['n_train']}, test={info['n_test']})", flush=True)
 
 
 def main() -> None:

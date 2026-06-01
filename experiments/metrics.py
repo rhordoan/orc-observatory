@@ -333,6 +333,7 @@ def _make_ils_generator(space, algo, budget, trial_seed, kwargs):
                          tabu_search, one_plus_one_ea,
                          variable_neighborhood_search)
     from experiments.boltzmann_ils import boltzmann_orc_ils
+    from experiments.orc_advanced_ils import orc_walk_ils, orc_adaptive_ils, orc_sa
 
     dispatch = {
         "orc_pert": lambda: orc_ils(space, budget=budget, d_r=kwargs.get("d_r", 2), seed=trial_seed),
@@ -345,6 +346,9 @@ def _make_ils_generator(space, algo, budget, trial_seed, kwargs):
         "tabu": lambda: tabu_search(space, budget=budget, seed=trial_seed),
         "ea11": lambda: one_plus_one_ea(space, budget=budget, seed=trial_seed),
         "vns": lambda: variable_neighborhood_search(space, budget=budget, seed=trial_seed),
+        "orc_walk": lambda: orc_walk_ils(space, budget=budget, walk_length=kwargs.get("walk_length", 3), seed=trial_seed),
+        "orc_adaptive": lambda: orc_adaptive_ils(space, budget=budget, seed=trial_seed),
+        "orc_sa": lambda: orc_sa(space, budget=budget, seed=trial_seed),
     }
     if algo not in dispatch:
         raise ValueError(f"Unknown algorithm: {algo}")

@@ -1,0 +1,84 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: orc-master-v2
+  namespace: runai-romania-dev
+  labels:
+    app: orc-master-v2
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app: orc-master-v2
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: k8s-worker-gpu-node-xe8545
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 120
+      containers:
+      - name: runner
+        image: python:3.11-slim
+        imagePullPolicy: IfNotPresent
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -ex
+          apt-get update && apt-get install -y --no-install-recommends git
+          cd /workspace
+          git clone https://github.com/rhordoan/orc-observatory.git repo
+          cd repo
+
+          pip3 install --no-cache-dir \
+            -r requirements.txt \
+            -r experiments/requirements-experiments.txt
+
+          echo "=== Master v2: Three-Track Experiments ==="
+          echo "Track 1: ORC as universal features (ELA for CO)"
+          echo "Track 2: ORC continuous navigation (walk/adaptive/SA)"
+          echo "Track 3: Real-world OR (10 TSPLIB, 6 QAPLIB, 6 Flowshop, MAX-SAT)"
+
+          python3 -m experiments.runner \
+            --config experiments/configs/master_v2.yaml \
+            --output /results/master-v2
+
+          echo "=== Running algorithm selector (v2 + cross-domain + ORC vs FLA) ==="
+          python3 -m experiments.algorithm_selector \
+            --features /results/master-v2/otg_features.csv \
+            --fla /results/master-v2/fla_features.csv \
+            --ils /results/master-v2/ils_comparison_b2000.csv \
+            --output /results/master-v2
+
+          python3 -m experiments.algorithm_selector \
+            --features /results/master-v2/otg_features.csv \
+            --fla /results/master-v2/fla_features.csv \
+            --ils /results/master-v2/ils_comparison_b10000.csv \
+            --output /results/master-v2/selector-b10k
+
+          echo "=== MASTER V2 EXPERIMENTS COMPLETE ==="
+          ls -lR /results/master-v2/
+        env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: DEBIAN_FRONTEND
+          value: "noninteractive"
+        resources:
+          requests:
+            cpu: "128"
+            memory: 128Gi
+          limits:
+            cpu: "128"
+            memory: 128Gi
+        volumeMounts:
+        - name: results
+          mountPath: /results
+        - name: workspace
+          mountPath: /workspace
+      volumes:
+      - name: results
+        persistentVolumeClaim:
+          claimName: orc-experiment-results
+      - name: workspace
+        emptyDir:
+          sizeLimit: 20Gi
