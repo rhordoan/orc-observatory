@@ -158,10 +158,15 @@ def unified_escape_rate(
         real_orc = _precompute_orc(space, optima, gamma, use_gpu, attractor)
         topology = None
 
+    # Dynamic high-degree spaces (e.g. TSPLIB) can materialize millions of
+    # transient tours under shuffled fitness. Keep the main escape experiment
+    # moving and mark the shuffled ablation as unavailable for those cases.
+    effective_n_shuffles = 0 if is_structured and space.degree > 1000 else n_shuffles
+
     # Precompute shuffled ORCs (reuse topology when available)
     from experiments.ablations import ShuffledFitnessSpace, make_shuffle_perm
     shuffled_orcs = []
-    for s in range(n_shuffles):
+    for s in range(effective_n_shuffles):
         perm = make_shuffle_perm(space, seed + s + 1)
         shuf_space = ShuffledFitnessSpace(space, perm)
         shuf_orc = _precompute_orc(
@@ -169,7 +174,7 @@ def unified_escape_rate(
         shuffled_orcs.append(shuf_orc)
 
     strategies = ["orc", "mingap", "maxgap", "steepest", "random"]
-    for s in range(n_shuffles):
+    for s in range(effective_n_shuffles):
         strategies.append(f"shuffled_{s}")
 
     results_per_opt: dict[str, list[EscapeResult]] = {s: [] for s in strategies}
@@ -210,7 +215,7 @@ def unified_escape_rate(
         ))
 
         # Shuffled ORC directions
-        for s in range(n_shuffles):
+        for s in range(effective_n_shuffles):
             shuf_nbr = _orc_direction(shuffled_orcs[s][i])
             results_per_opt[f"shuffled_{s}"].append(
                 _measure_escape_for_optimum(space, opt, shuf_nbr, global_best))
@@ -231,14 +236,19 @@ def unified_escape_rate(
     # Shuffled: aggregate across all shuffle seeds
     shuf_esc_per_seed = []
     shuf_imp_per_seed = []
-    for s in range(n_shuffles):
+    for s in range(effective_n_shuffles):
         res = results_per_opt[f"shuffled_{s}"]
         shuf_esc_per_seed.append(100.0 * sum(r.escaped for r in res) / n_eligible)
         shuf_imp_per_seed.append(float(np.mean([r.fitness_improvement for r in res])))
-    out["escape_shuffled_mean_pct"] = float(np.mean(shuf_esc_per_seed))
-    out["escape_shuffled_std_pct"] = float(np.std(shuf_esc_per_seed))
-    out["improvement_shuffled_mean"] = float(np.mean(shuf_imp_per_seed))
-    out["n_shuffles"] = n_shuffles
+    if effective_n_shuffles:
+        out["escape_shuffled_mean_pct"] = float(np.mean(shuf_esc_per_seed))
+        out["escape_shuffled_std_pct"] = float(np.std(shuf_esc_per_seed))
+        out["improvement_shuffled_mean"] = float(np.mean(shuf_imp_per_seed))
+    else:
+        out["escape_shuffled_mean_pct"] = float("nan")
+        out["escape_shuffled_std_pct"] = float("nan")
+        out["improvement_shuffled_mean"] = float("nan")
+    out["n_shuffles"] = effective_n_shuffles
 
     # Ratios
     out["orc_over_random"] = out["escape_orc_pct"] / max(out["escape_random_pct"], 1e-9)
@@ -266,6 +276,9 @@ def compute_statistical_tests(rows: list[dict]) -> dict[str, Any]:
     mxg_escs = np.array([r["escape_maxgap_pct"] for r in rows])
 
     def safe_wilcoxon(a, b):
+        mask = np.isfinite(a) & np.isfinite(b)
+        a = a[mask]
+        b = b[mask]
         diff = a - b
         diff = diff[np.abs(diff) > 1e-12]
         if len(diff) < 10:
@@ -277,7 +290,12 @@ def compute_statistical_tests(rows: list[dict]) -> dict[str, Any]:
 
     def a12(a, b):
         """Vargha-Delaney A12: P(a > b) + 0.5 * P(a == b)."""
+        mask = np.isfinite(a) & np.isfinite(b)
+        a = a[mask]
+        b = b[mask]
         n = len(a)
+        if n == 0:
+            return float("nan")
         wins = sum((ai > bi) + 0.5 * (ai == bi) for ai, bi in zip(a, b))
         return wins / n
 
