@@ -281,12 +281,16 @@ def batch_orc_gpu(
     print(f"    batch_orc: neighbor fitness in {_time.time()-t1:.1f}s", flush=True)
 
     if return_topology:
-        t_cache = _time.time()
-        n_cached = 0
-        for y in unique_ys:
-            _ = space.neighbors(y)
-            n_cached += 1
-        print(f"    batch_orc: pre-cached {n_cached} neighbor arrays in {_time.time()-t_cache:.1f}s", flush=True)
+        max_precache = 3000 if k <= 2000 else 500
+        if len(unique_ys) <= max_precache:
+            t_cache = _time.time()
+            n_cached = 0
+            for y in unique_ys:
+                _ = space.neighbors(y)
+                n_cached += 1
+            print(f"    batch_orc: pre-cached {n_cached} neighbor arrays in {_time.time()-t_cache:.1f}s", flush=True)
+        else:
+            print(f"    batch_orc: skipping pre-cache ({len(unique_ys)} ys, degree={k}) to avoid OOM", flush=True)
 
     t2 = _time.time()
 

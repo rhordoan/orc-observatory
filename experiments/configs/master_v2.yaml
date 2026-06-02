@@ -91,8 +91,8 @@ grid:
     - {type: tsplib, instance: rat99,    n_restarts: 200, seeds: [0,1,2,3,4,5,6,7,8,9]}
     - {type: tsplib, instance: kroA100,  n_restarts: 150, seeds: [0,1,2,3,4,5,6,7,8,9]}
     - {type: tsplib, instance: kroB100,  n_restarts: 150, seeds: [0,1,2,3,4,5,6,7,8,9]}
-    - {type: tsplib, instance: eil101,   n_restarts: 150, seeds: [0,1,2,3,4,5,6,7,8,9]}
-    - {type: tsplib, instance: ch130,    n_restarts: 120, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: tsplib, instance: eil101,   n_restarts: 100, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: tsplib, instance: ch130,    n_restarts: 80,  seeds: [0,1,2,3,4,5,6,7,8,9]}
 
     # ══════════════════════════════════════════════════════════════
     # QAPLIB (transposition swap, sampling) -- expanded from 3 to 6

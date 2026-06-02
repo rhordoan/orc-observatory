@@ -66,10 +66,10 @@ spec:
         resources:
           requests:
             cpu: "128"
-            memory: 128Gi
+            memory: 256Gi
           limits:
             cpu: "128"
-            memory: 128Gi
+            memory: 256Gi
         volumeMounts:
         - name: results
           mountPath: /results

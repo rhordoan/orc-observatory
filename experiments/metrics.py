@@ -75,7 +75,10 @@ def _precompute_orc(
     from lib.orc import compute_all_orc, batch_orc_gpu, batch_orc_reuse_topology
 
     max_nbrs = 60 if space.degree > 100 else None
-    if space.degree > 30 and hasattr(space, "neighbor_table"):
+    mem_budget = len(optima) * (max_nbrs or space.degree) * space.degree
+    safe_for_batch = mem_budget < 200_000_000
+
+    if space.degree > 30 and hasattr(space, "neighbor_table") and safe_for_batch:
         idx_arr = np.array([o.idx for o in optima], dtype=np.int64)
         mn = max_nbrs or space.degree
 
