@@ -158,10 +158,15 @@ def unified_escape_rate(
         real_orc = _precompute_orc(space, optima, gamma, use_gpu, attractor)
         topology = None
 
-    # Dynamic high-degree spaces (e.g. TSPLIB) can materialize millions of
-    # transient tours under shuffled fitness. Keep the main escape experiment
-    # moving and mark the shuffled ablation as unavailable for those cases.
-    effective_n_shuffles = 0 if is_structured and space.degree > 1000 else n_shuffles
+    # Shuffled ablation on dynamic spaces requires pre-cached neighbor arrays.
+    # Only skip for instances where pre-caching would exceed ~80GB (e.g. ch130).
+    if is_structured:
+        n_unique_est = len(optima) * min(60, space.degree)
+        sol_size = getattr(space, '_n', getattr(space, '_n_jobs', space.degree))
+        est_bytes = n_unique_est * space.degree * sol_size * 16
+        effective_n_shuffles = 0 if est_bytes > 80 * (1024 ** 3) else n_shuffles
+    else:
+        effective_n_shuffles = n_shuffles
 
     # Precompute shuffled ORCs (reuse topology when available)
     from experiments.ablations import ShuffledFitnessSpace, make_shuffle_perm
