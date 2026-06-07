@@ -66,10 +66,10 @@ spec:
           value: "noninteractive"
         resources:
           requests:
-            cpu: "128"
+            cpu: "64"
             memory: 256Gi
           limits:
-            cpu: "128"
+            cpu: "96"
             memory: 256Gi
         volumeMounts:
         - name: results
