@@ -1,0 +1,81 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: orc-selector-v3
+  namespace: runai-romania-dev
+  labels:
+    app: orc-selector-v3
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app: orc-selector-v3
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: k8s-worker-gpu-node-xe8545
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 120
+      containers:
+      - name: runner
+        image: python:3.11-slim
+        imagePullPolicy: IfNotPresent
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -ex
+          apt-get update && apt-get install -y --no-install-recommends git
+          cd /workspace
+          git clone https://github.com/rhordoan/orc-observatory.git repo
+          cd repo
+
+          pip3 install --no-cache-dir \
+            -r requirements.txt \
+            -r experiments/requirements-experiments.txt
+
+          echo "=== Algorithm Selector V3 ==="
+          python3 -m experiments.runner \
+            --config experiments/configs/selector_v3.yaml \
+            --output /results/selector-v3
+
+          echo "=== Running algorithm selector (b5000) ==="
+          python3 -m experiments.algorithm_selector \
+            --features /results/selector-v3/otg_features.csv \
+            --fla /results/selector-v3/fla_features.csv \
+            --ils /results/selector-v3/ils_comparison_b5000.csv \
+            --output /results/selector-v3
+
+          echo "=== Running algorithm selector (b20000) ==="
+          python3 -m experiments.algorithm_selector \
+            --features /results/selector-v3/otg_features.csv \
+            --fla /results/selector-v3/fla_features.csv \
+            --ils /results/selector-v3/ils_comparison_b20000.csv \
+            --output /results/selector-v3/selector-b20k
+
+          echo "=== SELECTOR V3 COMPLETE ==="
+          ls -lR /results/selector-v3/
+        env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: DEBIAN_FRONTEND
+          value: "noninteractive"
+        resources:
+          requests:
+            cpu: "64"
+            memory: 128Gi
+          limits:
+            cpu: "96"
+            memory: 192Gi
+        volumeMounts:
+        - name: results
+          mountPath: /results
+        - name: workspace
+          mountPath: /workspace
+      volumes:
+      - name: results
+        persistentVolumeClaim:
+          claimName: orc-experiment-results
+      - name: workspace
+        emptyDir:
+          sizeLimit: 20Gi

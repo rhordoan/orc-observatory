@@ -1,0 +1,67 @@
+# Algorithm selection experiment only
+# Needs: otg_features (ORC + FLA features) + ILS (performance targets)
+# Then algorithm_selector.py runs on those CSVs
+
+experiments:
+  - otg_features
+  - ils
+
+# ILS config
+algorithms:
+  - saddle_orc
+  - orc_pert
+  - saddle_walk
+  - orc_walk
+  - boltzmann
+  - random
+  - rrhc
+  - mingap
+  - sa
+  - tabu
+  - ea11
+  - vns
+budgets: [5000, 20000]
+n_trials: 30
+
+grid:
+  items:
+    # NK landscapes
+    - {type: nk, n: 16, k: 4,  seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: nk, n: 16, k: 8,  seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: nk, n: 16, k: 12, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: nk, n: 18, k: 4,  seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: nk, n: 18, k: 8,  seeds: [0,1,2,3,4,5,6,7,8,9]}
+
+    # W-model
+    - {type: wmodel, n: 16, nu: 3, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: wmodel, n: 16, nu: 5, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: wmodel, n: 18, nu: 3, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: wmodel, n: 18, nu: 5, seeds: [0,1,2,3,4,5,6,7,8,9]}
+
+    # MAX-SAT
+    - {type: maxsat, n: 16, alpha: 4.27, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: maxsat, n: 18, alpha: 4.27, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: maxsat, n: 16, alpha: 3.0,  seeds: [0,1,2,3,4,5,6,7,8,9]}
+
+    # Graph Bisection
+    - {type: bisection, n: 16, p_in: 0.7, p_out: 0.05, model: planted, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: bisection, n: 16, p_in: 0.5, p_out: 0.2,  model: planted, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: bisection, n: 16, p_in: 0.3, p_out: 0.3,  model: er, seeds: [0,1,2,3,4,5,6,7,8,9]}
+
+    # TSPLIB
+    - {type: tsplib, instance: eil51,    n_restarts: 200, seeds: [0,1,2,3,4]}
+    - {type: tsplib, instance: berlin52, n_restarts: 200, seeds: [0,1,2,3,4]}
+    - {type: tsplib, instance: st70,     n_restarts: 150, seeds: [0,1,2,3,4]}
+    - {type: tsplib, instance: eil76,    n_restarts: 150, seeds: [0,1,2,3,4]}
+    - {type: tsplib, instance: kroA100,  n_restarts: 100, seeds: [0,1,2,3,4]}
+
+    # QAPLIB
+    - {type: qaplib, instance: nug12,  n_restarts: 200, seeds: [0,1,2,3,4]}
+    - {type: qaplib, instance: tai12a, n_restarts: 200, seeds: [0,1,2,3,4]}
+    - {type: qaplib, instance: had14,  n_restarts: 200, seeds: [0,1,2,3,4]}
+    - {type: qaplib, instance: chr15a, n_restarts: 200, seeds: [0,1,2,3,4]}
+
+    # Flowshop
+    - {type: flowshop, instance: tai20_5_0,  n_restarts: 300, seeds: [0,1,2,3,4]}
+    - {type: flowshop, instance: tai20_10_0, n_restarts: 250, seeds: [0,1,2,3,4]}
+    - {type: flowshop, instance: tai20_20_0, n_restarts: 200, seeds: [0,1,2,3,4]}
