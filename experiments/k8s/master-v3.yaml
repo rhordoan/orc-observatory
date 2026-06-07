@@ -1,0 +1,85 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: orc-master-v3
+  namespace: runai-romania-dev
+  labels:
+    app: orc-master-v3
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app: orc-master-v3
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: k8s-worker-gpu-node-xe8545
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 120
+      containers:
+      - name: runner
+        image: python:3.11-slim
+        imagePullPolicy: IfNotPresent
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -ex
+          apt-get update && apt-get install -y --no-install-recommends git
+          cd /workspace
+          git clone https://github.com/rhordoan/orc-observatory.git repo
+          cd repo
+
+          pip3 install --no-cache-dir \
+            -r requirements.txt \
+            -r experiments/requirements-experiments.txt
+
+          echo "=== Master v3: Saddle-ORC Experiments ==="
+          echo "KEY: Saddle-ORC fixes curvature-gap bias (r>-0.95)"
+          echo "NEW: saddle_orc, saddle_walk algorithms"
+          echo "NEW: Graph Bisection domain"
+          echo "7 domains, ~750 instances, 16 algorithms"
+
+          python3 -m experiments.runner \
+            --config experiments/configs/master_v3.yaml \
+            --output /results/master-v3
+
+          echo "=== Running algorithm selector ==="
+          python3 -m experiments.algorithm_selector \
+            --features /results/master-v3/otg_features.csv \
+            --fla /results/master-v3/fla_features.csv \
+            --ils /results/master-v3/ils_comparison_b5000.csv \
+            --output /results/master-v3
+
+          python3 -m experiments.algorithm_selector \
+            --features /results/master-v3/otg_features.csv \
+            --fla /results/master-v3/fla_features.csv \
+            --ils /results/master-v3/ils_comparison_b20000.csv \
+            --output /results/master-v3/selector-b20k
+
+          echo "=== MASTER V3 EXPERIMENTS COMPLETE ==="
+          ls -lR /results/master-v3/
+        env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: DEBIAN_FRONTEND
+          value: "noninteractive"
+        resources:
+          requests:
+            cpu: "128"
+            memory: 256Gi
+          limits:
+            cpu: "128"
+            memory: 256Gi
+        volumeMounts:
+        - name: results
+          mountPath: /results
+        - name: workspace
+          mountPath: /workspace
+      volumes:
+      - name: results
+        persistentVolumeClaim:
+          claimName: orc-experiment-results
+      - name: workspace
+        emptyDir:
+          sizeLimit: 20Gi

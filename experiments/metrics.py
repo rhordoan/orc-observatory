@@ -26,6 +26,73 @@ def _orc_direction(orc_vals: dict[int, float]) -> int:
     return min(orc_vals, key=orc_vals.get)
 
 
+def _orc_filtered_direction(
+    orc_vals: dict[int, float], space: SearchSpace, x_idx: int, eps: float = 1e-10,
+) -> int:
+    """Most-negative ORC among non-neutral neighbors only.
+
+    Filters out neighbors whose fitness equals f(x), so ORC selection
+    focuses on the informative part of the neighborhood.
+    """
+    fx = space.fitness(x_idx)
+    filtered = {y: kappa for y, kappa in orc_vals.items()
+                if abs(space.fitness(y) - fx) > eps}
+    if not filtered:
+        return min(orc_vals, key=orc_vals.get)
+    return min(filtered, key=filtered.get)
+
+
+def _orc_gapweighted_direction(
+    orc_vals: dict[int, float], space: SearchSpace, x_idx: int,
+) -> int:
+    """Neighbor maximizing |fitness_gap| * (-kappa).
+
+    Combines fitness signal strength with geometric escape signal,
+    naturally downweighting neutral neighbors.
+    """
+    fx = space.fitness(x_idx)
+    best_y, best_score = None, -float("inf")
+    for y, kappa in orc_vals.items():
+        gap = abs(space.fitness(y) - fx)
+        score = gap * (-kappa)
+        if score > best_score:
+            best_score, best_y = score, y
+    return best_y if best_y is not None else min(orc_vals, key=orc_vals.get)
+
+
+def _orc_saddle_direction(
+    orc_vals: dict[int, float], space: SearchSpace, x_idx: int,
+    keep_frac: float = 0.5,
+) -> int:
+    """Saddle-ORC: pre-filter to closest-fitness neighbors, then min-kappa.
+
+    On bit-flip spaces, raw min-kappa correlates with max fitness gap
+    (r > 0.95), selecting deep-basin neighbors instead of saddle points.
+    Pre-filtering to the closer-fitness half removes this bias, letting
+    ORC discriminate among genuine escape candidates.
+
+    This replicates the mechanism that makes ORC effective on TSPLIB,
+    where max_nbrs=60 out of degree=1224 implicitly pre-filters to the
+    nearest-fitness 5%.
+    """
+    fx = space.fitness(x_idx)
+    by_gap = sorted(orc_vals.keys(), key=lambda y: abs(space.fitness(y) - fx))
+    keep = max(1, int(len(by_gap) * keep_frac))
+    saddle_candidates = {y: orc_vals[y] for y in by_gap[:keep]}
+    return min(saddle_candidates, key=saddle_candidates.get)
+
+
+def _fitness_density(space: SearchSpace, x_idx: int, eps: float = 1e-10) -> float:
+    """Fraction of neighbors with fitness != f(x). Predicts ORC effectiveness."""
+    fx = space.fitness(x_idx)
+    if hasattr(space, "neighbor_fitnesses"):
+        nf = space.neighbor_fitnesses(x_idx)
+        return float(np.sum(np.abs(nf - fx) > eps)) / max(len(nf), 1)
+    nbrs = space.neighbors(x_idx)
+    n_diff = sum(1 for n in nbrs if abs(space.fitness(int(n)) - fx) > eps)
+    return n_diff / max(len(nbrs), 1)
+
+
 def _mingap_direction(space: SearchSpace, x: int) -> int:
     """Neighbor with smallest |f(y) - f(x)|."""
     nbrs = space.neighbors(x)
@@ -178,17 +245,36 @@ def unified_escape_rate(
             shuf_space, optima, gamma, use_gpu=False, topology=topology)
         shuffled_orcs.append(shuf_orc)
 
-    strategies = ["orc", "mingap", "maxgap", "steepest", "random"]
+    strategies = ["orc", "orc_filtered", "orc_gapweighted", "orc_saddle",
+                   "mingap", "maxgap", "steepest", "random"]
     for s in range(effective_n_shuffles):
         strategies.append(f"shuffled_{s}")
 
     results_per_opt: dict[str, list[EscapeResult]] = {s: [] for s in strategies}
+    density_values: list[float] = []
 
     for i, opt in eligible_optima:
-        # ORC direction
+        density_values.append(_fitness_density(space, opt.idx))
+
+        # ORC direction (standard)
         orc_nbr = _orc_direction(real_orc[i])
         results_per_opt["orc"].append(
             _measure_escape_for_optimum(space, opt, orc_nbr, global_best))
+
+        # Filtered ORC: only non-neutral candidates
+        orc_filt_nbr = _orc_filtered_direction(real_orc[i], space, opt.idx)
+        results_per_opt["orc_filtered"].append(
+            _measure_escape_for_optimum(space, opt, orc_filt_nbr, global_best))
+
+        # Gap-weighted ORC: |gap| * (-kappa)
+        orc_gw_nbr = _orc_gapweighted_direction(real_orc[i], space, opt.idx)
+        results_per_opt["orc_gapweighted"].append(
+            _measure_escape_for_optimum(space, opt, orc_gw_nbr, global_best))
+
+        # Saddle-ORC: top-50% closest fitness, then min-kappa
+        orc_saddle_nbr = _orc_saddle_direction(real_orc[i], space, opt.idx)
+        results_per_opt["orc_saddle"].append(
+            _measure_escape_for_optimum(space, opt, orc_saddle_nbr, global_best))
 
         # MinGap direction
         mg_nbr = _mingap_direction(space, opt.idx)
@@ -229,9 +315,12 @@ def unified_escape_rate(
     out: dict[str, Any] = {
         "n_optima": len(optima),
         "n_eligible": n_eligible,
+        "fitness_density_mean": float(np.mean(density_values)) if density_values else 0.0,
+        "fitness_density_std": float(np.std(density_values)) if density_values else 0.0,
     }
 
-    for strat in ["orc", "mingap", "maxgap", "steepest", "random"]:
+    for strat in ["orc", "orc_filtered", "orc_gapweighted", "orc_saddle",
+                   "mingap", "maxgap", "steepest", "random"]:
         res = results_per_opt[strat]
         esc_pct = 100.0 * sum(r.escaped for r in res) / n_eligible
         mean_imp = float(np.mean([r.fitness_improvement for r in res]))
@@ -262,6 +351,9 @@ def unified_escape_rate(
 
     # Per-optimum arrays for statistical tests
     out["_per_opt_orc"] = [r.escaped for r in results_per_opt["orc"]]
+    out["_per_opt_orc_filtered"] = [r.escaped for r in results_per_opt["orc_filtered"]]
+    out["_per_opt_orc_gapweighted"] = [r.escaped for r in results_per_opt["orc_gapweighted"]]
+    out["_per_opt_orc_saddle"] = [r.escaped for r in results_per_opt["orc_saddle"]]
     out["_per_opt_mingap"] = [r.escaped for r in results_per_opt["mingap"]]
     out["_per_opt_random"] = [r.escaped for r in results_per_opt["random"]]
     out["_per_opt_steepest"] = [r.escaped for r in results_per_opt["steepest"]]
@@ -354,15 +446,17 @@ def _lon_mean_rank(lon, optima: list[LocalOptimum]) -> float:
 # ── ILS performance ─────────────────────────────────────────────────
 
 def _make_ils_generator(space, algo, budget, trial_seed, kwargs):
-    from lib.ils import (orc_ils, random_ils, random_restart_hc,
+    from lib.ils import (orc_ils, saddle_orc_ils, random_ils, random_restart_hc,
                          mingap_ils, orc_only_ils, simulated_annealing,
                          tabu_search, one_plus_one_ea,
                          variable_neighborhood_search)
     from experiments.boltzmann_ils import boltzmann_orc_ils
-    from experiments.orc_advanced_ils import orc_walk_ils, orc_adaptive_ils, orc_sa
+    from experiments.orc_advanced_ils import (orc_walk_ils, orc_adaptive_ils, orc_sa,
+                                              saddle_orc_walk_ils)
 
     dispatch = {
         "orc_pert": lambda: orc_ils(space, budget=budget, d_r=kwargs.get("d_r", 2), seed=trial_seed),
+        "saddle_orc": lambda: saddle_orc_ils(space, budget=budget, d_r=kwargs.get("d_r", 2), seed=trial_seed),
         "random": lambda: random_ils(space, budget=budget, d_r_total=kwargs.get("d_r_total", 3), seed=trial_seed),
         "rrhc": lambda: random_restart_hc(space, budget=budget, seed=trial_seed),
         "orc_only": lambda: orc_only_ils(space, budget=budget, seed=trial_seed),
@@ -373,6 +467,7 @@ def _make_ils_generator(space, algo, budget, trial_seed, kwargs):
         "ea11": lambda: one_plus_one_ea(space, budget=budget, seed=trial_seed),
         "vns": lambda: variable_neighborhood_search(space, budget=budget, seed=trial_seed),
         "orc_walk": lambda: orc_walk_ils(space, budget=budget, walk_length=kwargs.get("walk_length", 3), seed=trial_seed),
+        "saddle_walk": lambda: saddle_orc_walk_ils(space, budget=budget, walk_length=kwargs.get("walk_length", 3), seed=trial_seed),
         "orc_adaptive": lambda: orc_adaptive_ils(space, budget=budget, seed=trial_seed),
         "orc_sa": lambda: orc_sa(space, budget=budget, seed=trial_seed),
     }

@@ -428,3 +428,24 @@ def min_orc_neighbor(
     orc_values = compute_all_orc(space, x, gamma)
     best = min(orc_values, key=orc_values.get)
     return best, orc_values[best]
+
+
+def saddle_orc_neighbor(
+    space: SearchSpace,
+    x: int,
+    gamma: float = 1.0,
+    keep_frac: float = 0.5,
+) -> tuple[int, float]:
+    """Saddle-ORC: pre-filter to closest-fitness half, then min-kappa.
+
+    Raw min-kappa correlates with max fitness gap (r > -0.95 on bit-flip
+    spaces), selecting deep-basin neighbors instead of escape directions.
+    Pre-filtering to the near-fitness "saddle zone" removes this bias.
+    """
+    orc_values = compute_all_orc(space, x, gamma)
+    fx = space.fitness(x)
+    by_gap = sorted(orc_values.keys(), key=lambda y: abs(space.fitness(y) - fx))
+    keep = max(1, int(len(by_gap) * keep_frac))
+    candidates = {y: orc_values[y] for y in by_gap[:keep]}
+    best = min(candidates, key=candidates.get)
+    return best, candidates[best]

@@ -1,0 +1,121 @@
+# Master v3: Saddle-ORC experiment suite
+#
+# KEY CHANGE from v2: Saddle-ORC fixes the curvature-gap bias where
+# min-kappa correlates with max fitness gap (r > -0.95), selecting
+# deep-basin neighbors. Pre-filtering to the closest-fitness half
+# before ORC selection corrects this.
+#
+# New algorithms: saddle_orc, saddle_walk
+# New domain: graph bisection (planted partition + ER)
+# Kept: all v2 algorithms for before/after comparison
+#
+# ~750 instances across 7 problem domains
+
+experiments:
+  - escape
+  - otg_features
+  - ils
+  - scalability
+
+# Escape config
+n_random_trials: 30
+n_shuffles: 5
+
+# ILS config -- 16 algorithms (v2's 12 + 2 saddle variants + 2 dropped)
+algorithms:
+  - saddle_orc
+  - orc_pert
+  - saddle_walk
+  - orc_walk
+  - boltzmann
+  - random
+  - rrhc
+  - mingap
+  - sa
+  - tabu
+  - ea11
+  - vns
+  - orc_adaptive
+  - orc_sa
+budgets: [5000, 20000]
+n_trials: 50
+
+grid:
+  items:
+    # ==============================================================
+    # NK landscapes (bit-flip, full enumeration)
+    # ==============================================================
+    - {type: nk, n: 16, k: 4,  seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: nk, n: 16, k: 6,  seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: nk, n: 16, k: 8,  seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: nk, n: 16, k: 10, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: nk, n: 16, k: 12, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: nk, n: 18, k: 4,  seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: nk, n: 18, k: 8,  seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: nk, n: 18, k: 12, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: nk, n: 20, k: 4,  seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: nk, n: 20, k: 8,  seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: nk, n: 20, k: 12, seeds: [0,1,2,3,4,5,6,7,8,9]}
+
+    # ==============================================================
+    # W-model (bit-flip, full enumeration)
+    # ==============================================================
+    - {type: wmodel, n: 16, nu: 3, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: wmodel, n: 16, nu: 5, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: wmodel, n: 16, nu: 7, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: wmodel, n: 18, nu: 3, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: wmodel, n: 18, nu: 5, seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]}
+    - {type: wmodel, n: 20, nu: 3, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: wmodel, n: 20, nu: 5, seeds: [0,1,2,3,4,5,6,7,8,9]}
+
+    # ==============================================================
+    # MAX-SAT (bit-flip, full enumeration)
+    # ==============================================================
+    - {type: maxsat, n: 16, alpha: 4.27, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: maxsat, n: 18, alpha: 4.27, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: maxsat, n: 16, alpha: 3.0,  seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: maxsat, n: 18, alpha: 3.0,  seeds: [0,1,2,3,4,5,6,7,8,9]}
+
+    # ==============================================================
+    # Graph Bisection (bit-flip, full enumeration) -- NEW DOMAIN
+    # ==============================================================
+    - {type: bisection, n: 16, p_in: 0.7, p_out: 0.05, model: planted, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: bisection, n: 16, p_in: 0.5, p_out: 0.2,  model: planted, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: bisection, n: 18, p_in: 0.7, p_out: 0.05, model: planted, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: bisection, n: 18, p_in: 0.5, p_out: 0.2,  model: planted, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: bisection, n: 16, p_in: 0.3, p_out: 0.3,  model: er, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: bisection, n: 18, p_in: 0.3, p_out: 0.3,  model: er, seeds: [0,1,2,3,4,5,6,7,8,9]}
+
+    # ==============================================================
+    # TSPLIB (2-opt, sampling)
+    # ==============================================================
+    - {type: tsplib, instance: eil51,    n_restarts: 300, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: tsplib, instance: berlin52, n_restarts: 300, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: tsplib, instance: st70,     n_restarts: 250, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: tsplib, instance: eil76,    n_restarts: 250, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: tsplib, instance: pr76,     n_restarts: 250, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: tsplib, instance: rat99,    n_restarts: 200, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: tsplib, instance: kroA100,  n_restarts: 150, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: tsplib, instance: kroB100,  n_restarts: 150, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: tsplib, instance: eil101,   n_restarts: 100, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: tsplib, instance: ch130,    n_restarts: 80,  seeds: [0,1,2,3,4,5,6,7,8,9]}
+
+    # ==============================================================
+    # QAPLIB (transposition swap, sampling)
+    # ==============================================================
+    - {type: qaplib, instance: nug12,  n_restarts: 300, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: qaplib, instance: tai12a, n_restarts: 300, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: qaplib, instance: had14,  n_restarts: 300, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: qaplib, instance: chr15a, n_restarts: 300, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: qaplib, instance: esc16a, n_restarts: 250, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: qaplib, instance: rou20,  n_restarts: 200, seeds: [0,1,2,3,4,5,6,7,8,9]}
+
+    # ==============================================================
+    # Flowshop (pairwise swap, sampling)
+    # ==============================================================
+    - {type: flowshop, instance: tai20_5_0,  n_restarts: 500, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: flowshop, instance: tai20_5_1,  n_restarts: 500, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: flowshop, instance: tai20_10_0, n_restarts: 400, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: flowshop, instance: tai20_10_1, n_restarts: 400, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: flowshop, instance: tai20_20_0, n_restarts: 300, seeds: [0,1,2,3,4,5,6,7,8,9]}
+    - {type: flowshop, instance: tai50_5_0,  n_restarts: 300, seeds: [0,1,2,3,4,5,6,7,8,9]}

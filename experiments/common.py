@@ -21,6 +21,7 @@ from lib.search_spaces import (
     MaxSATSearchSpace,
     TSPSearchSpace,
     QAPSearchSpace,
+    GraphBisectionSearchSpace,
 )
 from lib.search_spaces.protocol import SearchSpace
 
@@ -94,6 +95,15 @@ def make_space(spec: dict[str, Any], use_gpu: bool = False) -> SearchSpace:
             instance_name=spec["instance"],
             data_dir=spec.get("data_dir"),
             n_restarts=spec.get("n_restarts", 500),
+            seed=seed,
+            use_gpu=use_gpu,
+        )
+    if kind == "bisection":
+        return GraphBisectionSearchSpace(
+            n=spec["n"],
+            edge_prob_within=spec.get("p_in", 0.7),
+            edge_prob_between=spec.get("p_out", 0.1),
+            model=spec.get("model", "planted"),
             seed=seed,
             use_gpu=use_gpu,
         )

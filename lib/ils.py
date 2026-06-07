@@ -13,7 +13,7 @@ from typing import Generator
 import numpy as np
 
 from .search_spaces.protocol import SearchSpace
-from .orc import compute_all_orc, min_orc_neighbor
+from .orc import compute_all_orc, min_orc_neighbor, saddle_orc_neighbor
 
 
 @dataclass
@@ -163,6 +163,49 @@ def orc_ils(
             best = x_star
 
         yield ILSEvent(algo="orc", evals=cs.eval_count,
+                       best_fitness=best_fit, current_optimum=x_star)
+
+
+def saddle_orc_ils(
+    space: SearchSpace,
+    budget: int = 5000,
+    d_r: int = 2,
+    gamma: float = 1.0,
+    keep_frac: float = 0.5,
+    seed: int | None = None,
+) -> Generator[ILSEvent, None, None]:
+    """Saddle-ORC ILS: pre-filter to saddle zone, then min-kappa + random walk.
+
+    Fixes the curvature-gap bias where raw min-kappa selects deep-basin
+    neighbors. Pre-filters to the closest-fitness fraction of the
+    neighborhood before ORC selection.
+    """
+    rng = np.random.default_rng(seed)
+    cs = CountingSpace(space)
+
+    start = int(rng.integers(0, cs.size))
+    x_star = _hill_climb_counted(cs, start)
+    best = x_star
+    best_fit = cs.fitness(best)
+
+    yield ILSEvent(algo="saddle_orc", evals=cs.eval_count,
+                   best_fitness=best_fit, current_optimum=x_star)
+
+    while cs.eval_count < budget:
+        y_star, _ = saddle_orc_neighbor(space, x_star, gamma, keep_frac)
+
+        current = y_star
+        for _ in range(d_r):
+            nbrs = cs.neighbors(current)
+            current = int(rng.choice(nbrs))
+
+        x_star = _hill_climb_counted(cs, current)
+        f = cs.fitness(x_star)
+        if f > best_fit:
+            best_fit = f
+            best = x_star
+
+        yield ILSEvent(algo="saddle_orc", evals=cs.eval_count,
                        best_fitness=best_fit, current_optimum=x_star)
 
 

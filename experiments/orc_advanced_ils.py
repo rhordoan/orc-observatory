@@ -15,7 +15,7 @@ from typing import Generator
 import numpy as np
 
 from lib.search_spaces.protocol import SearchSpace
-from lib.orc import compute_all_orc
+from lib.orc import compute_all_orc, saddle_orc_neighbor
 from lib.ils import CountingSpace, ILSEvent, _hill_climb_counted
 
 
@@ -56,6 +56,41 @@ def orc_walk_ils(
             best = x_star
 
         yield ILSEvent(algo="orc_walk", evals=cs.eval_count,
+                       best_fitness=best_fit, current_optimum=x_star)
+
+
+def saddle_orc_walk_ils(
+    space: SearchSpace,
+    budget: int = 5000,
+    walk_length: int = 3,
+    gamma: float = 1.0,
+    keep_frac: float = 0.5,
+    seed: int | None = None,
+) -> Generator[ILSEvent, None, None]:
+    """Saddle-ORC Walk: multi-step walk using saddle-filtered min-kappa."""
+    rng = np.random.default_rng(seed)
+    cs = CountingSpace(space)
+
+    start = int(rng.integers(0, cs.size))
+    x_star = _hill_climb_counted(cs, start)
+    best = x_star
+    best_fit = cs.fitness(best)
+
+    yield ILSEvent(algo="saddle_walk", evals=cs.eval_count,
+                   best_fitness=best_fit, current_optimum=x_star)
+
+    while cs.eval_count < budget:
+        current = x_star
+        for _ in range(walk_length):
+            current, _ = saddle_orc_neighbor(space, current, gamma, keep_frac)
+
+        x_star = _hill_climb_counted(cs, current)
+        f = cs.fitness(x_star)
+        if f > best_fit:
+            best_fit = f
+            best = x_star
+
+        yield ILSEvent(algo="saddle_walk", evals=cs.eval_count,
                        best_fitness=best_fit, current_optimum=x_star)
 
 
