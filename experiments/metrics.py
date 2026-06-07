@@ -93,6 +93,46 @@ def _fitness_density(space: SearchSpace, x_idx: int, eps: float = 1e-10) -> floa
     return n_diff / max(len(nbrs), 1)
 
 
+def _orc_walk_escape(
+    orc_vals: dict[int, float], space: SearchSpace, opt: LocalOptimum,
+    global_best: float,
+) -> EscapeResult:
+    """Walk neighbors in curvature order; return first that escapes.
+
+    This matches the paper's original measurement: ORC provides a
+    *ranked* list of escape candidates, not just a single pick.
+    """
+    ranked = sorted(orc_vals, key=orc_vals.get)
+    for y in ranked:
+        dest = hill_climb(space, y)
+        dest_fit = space.fitness(dest)
+        if dest_fit > opt.fitness + 1e-12:
+            gap = global_best - opt.fitness
+            imp = (dest_fit - opt.fitness) / gap if gap > 1e-12 else 0.0
+            return EscapeResult(escaped=True, fitness_improvement=imp)
+    return EscapeResult(escaped=False, fitness_improvement=0.0)
+
+
+def _orc_saddle_walk_escape(
+    orc_vals: dict[int, float], space: SearchSpace, opt: LocalOptimum,
+    global_best: float, keep_frac: float = 0.5,
+) -> EscapeResult:
+    """Saddle-ORC walk: pre-filter to saddle zone, then walk in curvature order."""
+    fx = opt.fitness
+    by_gap = sorted(orc_vals.keys(), key=lambda y: abs(space.fitness(y) - fx))
+    keep = max(1, int(len(by_gap) * keep_frac))
+    candidates = {y: orc_vals[y] for y in by_gap[:keep]}
+    ranked = sorted(candidates, key=candidates.get)
+    for y in ranked:
+        dest = hill_climb(space, y)
+        dest_fit = space.fitness(dest)
+        if dest_fit > fx + 1e-12:
+            gap = global_best - fx
+            imp = (dest_fit - fx) / gap if gap > 1e-12 else 0.0
+            return EscapeResult(escaped=True, fitness_improvement=imp)
+    return EscapeResult(escaped=False, fitness_improvement=0.0)
+
+
 def _mingap_direction(space: SearchSpace, x: int) -> int:
     """Neighbor with smallest |f(y) - f(x)|."""
     nbrs = space.neighbors(x)
@@ -245,7 +285,7 @@ def unified_escape_rate(
             shuf_space, optima, gamma, use_gpu=False, topology=topology)
         shuffled_orcs.append(shuf_orc)
 
-    strategies = ["orc", "orc_filtered", "orc_gapweighted", "orc_saddle",
+    strategies = ["orc", "orc_top1", "orc_saddle", "orc_saddle_top1",
                    "mingap", "maxgap", "steepest", "random"]
     for s in range(effective_n_shuffles):
         strategies.append(f"shuffled_{s}")
@@ -256,24 +296,22 @@ def unified_escape_rate(
     for i, opt in eligible_optima:
         density_values.append(_fitness_density(space, opt.idx))
 
-        # ORC direction (standard)
-        orc_nbr = _orc_direction(real_orc[i])
+        # ORC walk (curvature-ranked walk-through -- paper's original method)
         results_per_opt["orc"].append(
+            _orc_walk_escape(real_orc[i], space, opt, global_best))
+
+        # ORC top-1 only (just min-kappa, Algorithm 1 literal)
+        orc_nbr = _orc_direction(real_orc[i])
+        results_per_opt["orc_top1"].append(
             _measure_escape_for_optimum(space, opt, orc_nbr, global_best))
 
-        # Filtered ORC: only non-neutral candidates
-        orc_filt_nbr = _orc_filtered_direction(real_orc[i], space, opt.idx)
-        results_per_opt["orc_filtered"].append(
-            _measure_escape_for_optimum(space, opt, orc_filt_nbr, global_best))
-
-        # Gap-weighted ORC: |gap| * (-kappa)
-        orc_gw_nbr = _orc_gapweighted_direction(real_orc[i], space, opt.idx)
-        results_per_opt["orc_gapweighted"].append(
-            _measure_escape_for_optimum(space, opt, orc_gw_nbr, global_best))
-
-        # Saddle-ORC: top-50% closest fitness, then min-kappa
-        orc_saddle_nbr = _orc_saddle_direction(real_orc[i], space, opt.idx)
+        # Saddle-ORC walk (pre-filter to saddle zone, then walk)
         results_per_opt["orc_saddle"].append(
+            _orc_saddle_walk_escape(real_orc[i], space, opt, global_best))
+
+        # Saddle-ORC top-1 (pre-filter, then just min-kappa in zone)
+        orc_saddle_nbr = _orc_saddle_direction(real_orc[i], space, opt.idx)
+        results_per_opt["orc_saddle_top1"].append(
             _measure_escape_for_optimum(space, opt, orc_saddle_nbr, global_best))
 
         # MinGap direction
@@ -305,11 +343,10 @@ def unified_escape_rate(
             fitness_improvement=random_improvement / n_random_trials,
         ))
 
-        # Shuffled ORC directions
+        # Shuffled ORC directions (walk-through)
         for s in range(effective_n_shuffles):
-            shuf_nbr = _orc_direction(shuffled_orcs[s][i])
             results_per_opt[f"shuffled_{s}"].append(
-                _measure_escape_for_optimum(space, opt, shuf_nbr, global_best))
+                _orc_walk_escape(shuffled_orcs[s][i], space, opt, global_best))
 
     # Aggregate
     out: dict[str, Any] = {
@@ -319,7 +356,7 @@ def unified_escape_rate(
         "fitness_density_std": float(np.std(density_values)) if density_values else 0.0,
     }
 
-    for strat in ["orc", "orc_filtered", "orc_gapweighted", "orc_saddle",
+    for strat in ["orc", "orc_top1", "orc_saddle", "orc_saddle_top1",
                    "mingap", "maxgap", "steepest", "random"]:
         res = results_per_opt[strat]
         esc_pct = 100.0 * sum(r.escaped for r in res) / n_eligible
@@ -351,9 +388,9 @@ def unified_escape_rate(
 
     # Per-optimum arrays for statistical tests
     out["_per_opt_orc"] = [r.escaped for r in results_per_opt["orc"]]
-    out["_per_opt_orc_filtered"] = [r.escaped for r in results_per_opt["orc_filtered"]]
-    out["_per_opt_orc_gapweighted"] = [r.escaped for r in results_per_opt["orc_gapweighted"]]
+    out["_per_opt_orc_top1"] = [r.escaped for r in results_per_opt["orc_top1"]]
     out["_per_opt_orc_saddle"] = [r.escaped for r in results_per_opt["orc_saddle"]]
+    out["_per_opt_orc_saddle_top1"] = [r.escaped for r in results_per_opt["orc_saddle_top1"]]
     out["_per_opt_mingap"] = [r.escaped for r in results_per_opt["mingap"]]
     out["_per_opt_random"] = [r.escaped for r in results_per_opt["random"]]
     out["_per_opt_steepest"] = [r.escaped for r in results_per_opt["steepest"]]
